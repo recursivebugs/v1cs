@@ -12,15 +12,19 @@ on:
         description: 'EKS Cluster Name'
         required: true
         type: string
+      ssh_key_name:
+        description: 'SSH Key Name'
+        required: true
+        type: string
       kubernetes_version:
         description: 'Kubernetes Version'
         required: true
-        default: '1.28'
+        default: '1.30'
         type: string
       node_instance_type:
         description: 'Node Instance Type'
         required: true
-        default: 't3.medium'
+        default: 't3.large'
         type: string
       node_count:
         description: 'Node Count'
@@ -30,7 +34,7 @@ on:
       region:
         description: 'AWS Region'
         required: true
-        default: 'us-east-1'
+        default: 'us-west-2'
         type: string
 
 env:
@@ -70,14 +74,11 @@ jobs:
 
       - name: Check for SSH Key Pair
         run: |
-          # Set key name with customer identifier
-          KEY_NAME="keyNameCluster"
-          
           # Check if key pair exists
-          KEY_EXISTS=$(aws ec2 describe-key-pairs --region $AWS_REGION --key-names $KEY_NAME --query 'KeyPairs[*].KeyName' --output text || echo "")
+          KEY_EXISTS=$(aws ec2 describe-key-pairs --region $AWS_REGION --key-names $ssh_key_name --query 'KeyPairs[*].KeyName' --output text || echo "")
           
           if [ -z "$KEY_EXISTS" ]; then
-            echo "ERROR: SSH key pair '$KEY_NAME' does not exist in region $AWS_REGION"
+            echo "ERROR: SSH key pair '$ssh_key_name' does not exist in region $AWS_REGION"
             echo "Please create this key pair manually in the AWS console before running this workflow."
             echo "This is required for secure SSH access to the cluster nodes."
             exit 1
@@ -99,7 +100,7 @@ jobs:
             --nodes-min 1 \
             --nodes-max $((NODE_COUNT * 2)) \
             --ssh-access \
-            --ssh-public-key keyNameCluster \
+            --ssh-public-key $ssh_key_name \
             --tags "Customer=$CUSTOMER_NAME" \
             --managed
 

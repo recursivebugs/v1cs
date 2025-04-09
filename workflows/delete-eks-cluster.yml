@@ -1,0 +1,93 @@
+name: Delete EKS Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'EKS Cluster Name'
+        required: true
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-east-1'
+        type: string
+      confirm_deletion:
+        description: 'Type "DELETE" to confirm cluster deletion'
+        required: true
+        type: string
+
+jobs:
+  delete-eks-cluster:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm_deletion == 'DELETE' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+      
+      - name: Setup eksctl
+        run: |
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+          eksctl version
+
+      - name: Verify cluster exists
+        run: |
+          CLUSTER_EXISTS=$(aws eks describe-cluster --name ${{ github.event.inputs.cluster_name }} --query "cluster.name" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$CLUSTER_EXISTS" == "NOT_FOUND" ]; then
+            echo "Cluster ${{ github.event.inputs.cluster_name }} not found in region ${{ github.event.inputs.region }}"
+            exit 1
+          else
+            echo "Cluster ${{ github.event.inputs.cluster_name }} found. Proceeding with deletion..."
+          fi
+
+      - name: Delete EKS Cluster
+        run: |
+          echo "Deleting EKS cluster: ${{ github.event.inputs.cluster_name }} in region ${{ github.event.inputs.region }}"
+          eksctl delete cluster \
+            --name ${{ github.event.inputs.cluster_name }} \
+            --region ${{ github.event.inputs.region }} \
+            --wait
+
+      - name: Verify deletion
+        run: |
+          CLUSTER_DELETED=false
+          max_attempts=10
+          attempt=0
+          
+          echo "Verifying cluster deletion..."
+          while [ $attempt -lt $max_attempts ]; do
+            CLUSTER_EXISTS=$(aws eks list-clusters --query "clusters[?contains(@,'${{ github.event.inputs.cluster_name }}')]" --output text)
+            
+            if [ -z "$CLUSTER_EXISTS" ]; then
+              CLUSTER_DELETED=true
+              break
+            fi
+            
+            echo "Waiting for cluster deletion to complete... (attempt $((attempt + 1))/$max_attempts)"
+            sleep 30
+            attempt=$((attempt + 1))
+          done
+          
+          if [ "$CLUSTER_DELETED" = true ]; then
+            echo "Cluster ${{ github.event.inputs.cluster_name }} successfully deleted!"
+          else
+            echo "Warning: Could not verify cluster deletion. Please check AWS console."
+            exit 1
+          fi
+
+      - name: Remove GitHub Variables
+        run: |
+          echo "Removing cluster info from GitHub Variables..."
+          
+          # This step requires appropriate GitHub API token with permissions to update repository variables
+          # Uncomment this when you have proper permissions set up
+          # gh variable remove EKS_CLUSTER_NAME --repo ${{ github.repository }}

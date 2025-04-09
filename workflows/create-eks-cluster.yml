@@ -1,0 +1,148 @@
+name: Create EKS Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_name:
+        description: 'Customer Name'
+        required: true
+        default: 'DemoCluster001'
+        type: string
+      cluster_name:
+        description: 'EKS Cluster Name'
+        required: true
+        type: string
+      kubernetes_version:
+        description: 'Kubernetes Version'
+        required: true
+        default: '1.28'
+        type: string
+      node_instance_type:
+        description: 'Node Instance Type'
+        required: true
+        default: 't3.medium'
+        type: string
+      node_count:
+        description: 'Node Count'
+        required: true
+        default: '2'
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-east-1'
+        type: string
+
+env:
+  CUSTOMER_NAME: ${{ github.event.inputs.customer_name }}
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  KUBERNETES_VERSION: ${{ github.event.inputs.kubernetes_version }}
+  NODE_INSTANCE_TYPE: ${{ github.event.inputs.node_instance_type }}
+  NODE_COUNT: ${{ github.event.inputs.node_count }}
+  AWS_REGION: ${{ github.event.inputs.region }}
+
+jobs:
+  create-eks-cluster:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup eksctl
+        run: |
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+          eksctl version
+
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Check for SSH Key Pair
+        run: |
+          # Set key name with customer identifier
+          KEY_NAME="keyNameCluster"
+          
+          # Check if key pair exists
+          KEY_EXISTS=$(aws ec2 describe-key-pairs --region $AWS_REGION --key-names $KEY_NAME --query 'KeyPairs[*].KeyName' --output text || echo "")
+          
+          if [ -z "$KEY_EXISTS" ]; then
+            echo "ERROR: SSH key pair '$KEY_NAME' does not exist in region $AWS_REGION"
+            echo "Please create this key pair manually in the AWS console before running this workflow."
+            echo "This is required for secure SSH access to the cluster nodes."
+            exit 1
+          else
+            echo "Key pair '$KEY_NAME' found in region $AWS_REGION. Proceeding with cluster creation."
+          fi
+
+      - name: Create EKS Cluster
+        run: |
+          echo "Creating EKS cluster for customer: $CUSTOMER_NAME"
+          echo "Cluster name: $CLUSTER_NAME in region $AWS_REGION"
+          eksctl create cluster \
+            --name $CLUSTER_NAME \
+            --version $KUBERNETES_VERSION \
+            --region $AWS_REGION \
+            --nodegroup-name standard-workers \
+            --node-type $NODE_INSTANCE_TYPE \
+            --nodes $NODE_COUNT \
+            --nodes-min 1 \
+            --nodes-max $((NODE_COUNT * 2)) \
+            --ssh-access \
+            --ssh-public-key keyNameCluster \
+            --tags "Customer=$CUSTOMER_NAME" \
+            --managed
+
+      - name: Verify Cluster
+        run: |
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+          kubectl get nodes
+          kubectl cluster-info
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace bytevault
+
+      - name: Create ConfigMap for cluster info
+        run: |
+          cat <<EOF > cluster-info.json
+          {
+            "clusterName": "$CLUSTER_NAME",
+            "region": "$AWS_REGION",
+            "kubernetesVersion": "$KUBERNETES_VERSION",
+            "nodeType": "$NODE_INSTANCE_TYPE",
+            "nodeCount": "$NODE_COUNT",
+            "createdAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+          
+          cat cluster-info.json
+
+      - name: Upload cluster info
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-info
+          path: cluster-info.json
+          retention-days: 90
+          
+
+
+      - name: Set GitHub Variables
+        run: |
+          echo "EKS_CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "Adding cluster info to GitHub Variables..."
+          
+          # This step requires appropriate GitHub API token with permissions to update repository variables
+          # Uncomment this when you have proper permissions set up
+          # gh variable set EKS_CLUSTER_NAME "$CLUSTER_NAME" --repo ${{ github.repository }}
+          # gh variable set AWS_REGION "$AWS_REGION" --repo ${{ github.repository }}

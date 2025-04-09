@@ -6,14 +6,15 @@ import os
 import sys
 
 def check_policy():
-    API_TOKEN = os.environ['API_TOKEN']
+    # Use the Container Security API Key instead of a separate token
+    API_KEY = os.environ['API_KEY']
     POLICY_NAME = os.environ['POLICY_NAME']
 
     url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
     
     headers = {
         'Accept': 'application/json',
-        'Authorization': f'Bearer {API_TOKEN}'
+        'Authorization': f'Bearer {API_KEY}'
     }
     
     response = requests.get(url, headers=headers)

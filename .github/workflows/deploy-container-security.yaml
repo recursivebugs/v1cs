@@ -12,14 +12,6 @@ on:
         required: true
         default: 'us-west-2'
         type: string
-      api_key:
-        description: 'Container Security API Key'
-        required: true
-        type: string
-      api_token:
-        description: 'XDR API Token'
-        required: true
-        type: string
       group_id:
         description: 'Group ID'
         required: false
@@ -35,21 +27,14 @@ on:
         required: false
         default: 'LogOnlyPolicy'
         type: string
-      cluster_name_prefix:
-        description: 'Cluster Name Prefix'
-        required: false
-        default: 'firefly'
-        type: string
 
 env:
   CLUSTER_NAME: ${{ github.event.inputs.cluster_name || vars.EKS_CLUSTER_NAME }}
   AWS_REGION: ${{ github.event.inputs.region || vars.AWS_REGION }}
-  API_KEY: ${{ github.event.inputs.api_key }}
-  API_TOKEN: ${{ github.event.inputs.api_token }}
+  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
   GROUP_ID: ${{ github.event.inputs.group_id }}
   RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
   POLICY_NAME: ${{ github.event.inputs.policy_name }}
-  CLUSTER_NAME_PREFIX: ${{ github.event.inputs.cluster_name_prefix }}
   POLICY_ID: ""
 
 jobs:
@@ -69,7 +54,7 @@ jobs:
       - name: Check if ruleset exists
         id: check-ruleset
         run: |
-          export API_TOKEN=${{ env.API_TOKEN }}
+          export API_KEY=${{ env.API_KEY }}
           export RULESET_NAME=${{ env.RULESET_NAME }}
           
           # Run the Python script and capture its output
@@ -89,7 +74,7 @@ jobs:
         id: create-ruleset
         if: steps.check-ruleset.outputs.exists != 'true'
         run: |
-          export API_TOKEN=${{ env.API_TOKEN }}
+          export API_KEY=${{ env.API_KEY }}
           export RULESET_FILE="trendmicro/rulesets.json"
           
           # Run the Python script and capture its output
@@ -110,7 +95,7 @@ jobs:
       - name: Check if policy exists
         id: check-policy
         run: |
-          export API_TOKEN=${{ env.API_TOKEN }}
+          export API_KEY=${{ env.API_KEY }}
           export POLICY_NAME=${{ env.POLICY_NAME }}
           
           # Run the Python script and capture its output
@@ -134,7 +119,7 @@ jobs:
           cp trendmicro/policy.json.template trendmicro/policy.json
           
           # Set environment variables for the script
-          export API_TOKEN=${{ env.API_TOKEN }}
+          export API_KEY=${{ env.API_KEY }}
           export POLICY_FILE="trendmicro/policy.json"
           export RULESET_ID=${{ steps.set-ruleset-id.outputs.ruleset_id }}
           
@@ -186,7 +171,6 @@ jobs:
           cloudOne:
             clusterRegistrationKey: true
             groupId: ${{ env.GROUP_ID }}
-            clusterNamePrefix: ${{ env.CLUSTER_NAME_PREFIX }}
             policyId: ${{ needs.manage-security-policies.outputs.policy_id }}
             endpoint: https://container.us-1.cloudone.trendmicro.com
             exclusion:
@@ -250,7 +234,6 @@ jobs:
           {
             "clusterName": "$CLUSTER_NAME",
             "region": "$AWS_REGION",
-            "clusterNamePrefix": "$CLUSTER_NAME_PREFIX",
             "policyId": "${{ needs.manage-security-policies.outputs.policy_id }}",
             "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }

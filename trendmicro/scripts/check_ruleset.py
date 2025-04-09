@@ -6,7 +6,8 @@ import os
 import sys
 
 def check_ruleset():
-    API_TOKEN = os.environ['API_TOKEN']
+    # Use the Container Security API Key instead of a separate token
+    API_KEY = os.environ['API_KEY']
     RULESET_NAME = os.environ['RULESET_NAME']
 
     url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
@@ -14,7 +15,7 @@ def check_ruleset():
     headers = {
         'Accept': 'application/json',
         'api-version': 'v1',
-        'Authorization': f'Bearer {API_TOKEN}'
+        'Authorization': f'Bearer {API_KEY}'
     }
     
     response = requests.get(url, headers=headers)

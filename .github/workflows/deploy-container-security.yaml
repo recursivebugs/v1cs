@@ -20,12 +20,12 @@ on:
       ruleset_name:
         description: 'Ruleset Name'
         required: false
-        default: 'LogOnlyRuleset22'
+        default: 'DemoLogOnlyRuleset'
         type: string
       policy_name:
         description: 'Policy Name'
         required: false
-        default: 'LogOnlyPolicy'
+        default: 'DemoLogOnlyPolicy'
         type: string
 
 env:

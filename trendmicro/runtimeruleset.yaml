@@ -1,0 +1,145 @@
+apiVersion: visionone.trendmicro.com/v1alpha1
+kind: RuntimeRuleset
+metadata:
+  labels:
+    app.kubernetes.io/name: init
+    app.kubernetes.io/managed-by: kustomize
+  name: trendmicro-ruleset-sample
+spec:
+  definition:
+    labels:
+      - key: "app"
+        value: "nginx"
+    rules:
+      - ruleID: TM-00000001
+        mitigation: log
+      - ruleID: TM-00000002
+        mitigation: log
+      - ruleID: TM-00000003
+        mitigation: log
+      - ruleID: TM-00000004
+        mitigation: log
+      - ruleID: TM-00000006
+        mitigation: log
+      - ruleID: TM-00000007
+        mitigation: log
+      - ruleID: TM-00000008
+        mitigation: log
+      - ruleID: TM-00000010
+        mitigation: log
+      - ruleID: TM-00000011
+        mitigation: log
+      - ruleID: TM-00000012
+        mitigation: log
+      - ruleID: TM-00000013
+        mitigation: log
+      - ruleID: TM-00000014
+        mitigation: log
+      - ruleID: TM-00000015
+        mitigation: log
+      - ruleID: TM-00000016
+        mitigation: log
+      - ruleID: TM-00000017
+        mitigation: log
+      - ruleID: TM-00000018
+        mitigation: log
+      - ruleID: TM-00000019
+        mitigation: log
+      - ruleID: TM-00000020
+        mitigation: log
+      - ruleID: TM-00000021
+        mitigation: log
+      - ruleID: TM-00000022
+        mitigation: log
+      - ruleID: TM-00000023
+        mitigation: log
+      - ruleID: TM-00000024
+        mitigation: log
+      - ruleID: TM-00000025
+        mitigation: log
+      - ruleID: TM-00000026
+        mitigation: log
+      - ruleID: TM-00000027
+        mitigation: log
+      - ruleID: TM-00000028
+        mitigation: log
+      - ruleID: TM-00000029
+        mitigation: log
+      - ruleID: TM-00000030
+        mitigation: log
+      - ruleID: TM-00000031
+        mitigation: log
+      - ruleID: TM-00000032
+        mitigation: log
+      - ruleID: TM-00000033
+        mitigation: log
+      - ruleID: TM-00000034
+        mitigation: log
+      - ruleID: TM-00000035
+        mitigation: log
+      - ruleID: TM-00000036
+        mitigation: log
+      - ruleID: TM-00000037
+        mitigation: log
+      - ruleID: TM-00000038
+        mitigation: log
+      - ruleID: TM-00000039
+        mitigation: log
+      - ruleID: TM-00000040
+        mitigation: log
+      - ruleID: TM-00000041
+        mitigation: log
+      - ruleID: TM-00000042
+        mitigation: log
+      - ruleID: TM-00000047
+        mitigation: log
+      - ruleID: TM-00000048
+        mitigation: log
+      - ruleID: TM-00000049
+        mitigation: log
+      - ruleID: TM-00000050
+        mitigation: log
+      - ruleID: TM-00000051
+        mitigation: log
+      - ruleID: TM-00000052
+        mitigation: log
+      - ruleID: TM-00000053
+        mitigation: log
+      - ruleID: TM-00000054
+        mitigation: log
+      - ruleID: TM-00000055
+        mitigation: log
+      - ruleID: TM-00000056
+        mitigation: log
+      - ruleID: TM-00000057
+        mitigation: log
+      - ruleID: TM-00000058
+        mitigation: log
+      - ruleID: TM-00000059
+        mitigation: log
+      - ruleID: TM-00000060
+        mitigation: log
+      - ruleID: TM-00000061
+        mitigation: log
+      - ruleID: TM-00000062
+        mitigation: log
+      - ruleID: TM-00000063
+        mitigation: log
+      - ruleID: TM-00000064
+        mitigation: log
+      - ruleID: TM-00000068
+        mitigation: log
+      - ruleID: TM-00000083
+        mitigation: log
+      - ruleID: TM-00000084
+        mitigation: log
+      - ruleID: TM-00000089
+        mitigation: log
+      - ruleID: TM-00000093
+        mitigation: log
+      - ruleID: TM-00000096
+        mitigation: log
+      - ruleID: TM-00000097
+        mitigation: log
+      - ruleID: TM-00000093
+        mitigation: log

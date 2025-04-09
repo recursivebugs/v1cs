@@ -40,6 +40,7 @@ on:
 env:
   CUSTOMER_NAME: ${{ github.event.inputs.customer_name }}
   CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  SSH_KEY_NAME: ${{ github.event.inputs.ssh_key_name }}
   KUBERNETES_VERSION: ${{ github.event.inputs.kubernetes_version }}
   NODE_INSTANCE_TYPE: ${{ github.event.inputs.node_instance_type }}
   NODE_COUNT: ${{ github.event.inputs.node_count }}
@@ -75,16 +76,34 @@ jobs:
       - name: Check for SSH Key Pair
         run: |
           # Check if key pair exists
-          KEY_EXISTS=$(aws ec2 describe-key-pairs --region $AWS_REGION --key-names $ssh_key_name --query 'KeyPairs[*].KeyName' --output text || echo "")
+          KEY_EXISTS=$(aws ec2 describe-key-pairs --region $AWS_REGION --key-names $SSH_KEY_NAME --query 'KeyPairs[*].KeyName' --output text || echo "")
           
           if [ -z "$KEY_EXISTS" ]; then
-            echo "ERROR: SSH key pair '$ssh_key_name' does not exist in region $AWS_REGION"
+            echo "ERROR: SSH key pair '$SSH_KEY_NAME' does not exist in region $AWS_REGION"
             echo "Please create this key pair manually in the AWS console before running this workflow."
             echo "This is required for secure SSH access to the cluster nodes."
             exit 1
           else
-            echo "Key pair '$KEY_NAME' found in region $AWS_REGION. Proceeding with cluster creation."
+            echo "Key pair '$SSH_KEY_NAME' found in region $AWS_REGION. Proceeding with cluster creation."
           fi
+
+      - name: Check if cluster exists
+        id: check-cluster
+        run: |
+          # Check if the cluster already exists
+          if aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION 2>/dev/null; then
+            echo "Cluster '$CLUSTER_NAME' already exists in region $AWS_REGION"
+            echo "will_delete=true" >> $GITHUB_OUTPUT
+          else
+            echo "Cluster '$CLUSTER_NAME' does not exist. Will create new cluster."
+            echo "will_delete=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete existing cluster if needed
+        if: steps.check-cluster.outputs.will_delete == 'true'
+        run: |
+          echo "Deleting existing cluster '$CLUSTER_NAME' in region $AWS_REGION"
+          eksctl delete cluster --name $CLUSTER_NAME --region $AWS_REGION --wait
 
       - name: Create EKS Cluster
         run: |
@@ -100,8 +119,8 @@ jobs:
             --nodes-min 1 \
             --nodes-max $((NODE_COUNT * 2)) \
             --ssh-access \
-            --ssh-public-key $ssh_key_name \
-            --tags "Customer=$CUSTOMER_NAME" \
+            --ssh-public-key $SSH_KEY_NAME \
+            --tags customer=$CUSTOMER_NAME \
             --managed
 
       - name: Verify Cluster
@@ -135,8 +154,6 @@ jobs:
           name: cluster-info
           path: cluster-info.json
           retention-days: 90
-          
-
 
       - name: Set GitHub Variables
         run: |

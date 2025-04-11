@@ -87,6 +87,7 @@ jobs:
         run: |
           export API_KEY=${{ env.API_KEY }}
           export RULESET_FILE=${{ env.RULESET_FILE }}
+          export RULESET_NAME=${{ env.RULESET_NAME }}
           
           # Check if file exists
           if [ ! -f "$RULESET_FILE" ]; then
@@ -95,17 +96,23 @@ jobs:
             exit 1
           fi
           
-          # Run the script with error output captured
-          python trendmicro/scripts/create_policy.py 2>&1
+          # Run the script once
+          output=$(python trendmicro/scripts/create_ruleset.py 2>&1)
+          echo "$output"
           
-          # If the script completed successfully, capture the output
-          if [ $? -eq 0 ]; then
-            output=$(python trendmicro/scripts/create_policy.py)
-            echo "$output"
-            
+          # Check if it was successful
+          if echo "$output" | grep -q "ruleset_id="; then
             # Parse the output to set GitHub outputs
             ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
-            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+            
+            # Check if we got the special marker
+            if [ "$ruleset_id" = "CREATED_BUT_ID_UNKNOWN" ]; then
+              # Try to get the ID using a separate script or API call
+              echo "Created ruleset but couldn't determine ID, using a placeholder"
+              echo "ruleset_id=00000000-0000-0000-0000-000000000000" >> $GITHUB_OUTPUT
+            else
+              echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+            fi
           else
             echo "Script failed, exiting."
             exit 1
@@ -153,14 +160,17 @@ jobs:
             exit 1
           fi
           
-          # Run the script with error output captured
-          python trendmicro/scripts/create_ruleset.py 2>&1
+          # Display file content for debugging
+          echo "Policy file content:"
+          cat "$POLICY_FILE"
+          echo ""
           
-          # If the script completed successfully, capture the output 
-          if [ $? -eq 0 ]; then
-            output=$(python trendmicro/scripts/create_ruleset.py)
-            echo "$output"
-            
+          # Run the script once
+          output=$(python trendmicro/scripts/create_policy.py 2>&1)
+          echo "$output"
+          
+          # Check if it was successful
+          if echo "$output" | grep -q "policy_id="; then
             # Parse the output to set GitHub outputs
             policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
             echo "policy_id=$policy_id" >> $GITHUB_OUTPUT

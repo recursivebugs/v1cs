@@ -89,26 +89,26 @@ jobs:
           export RULESET_FILE=${{ env.RULESET_FILE }}
           export RULESET_NAME="${{ env.RULESET_NAME }}"
           
-          # Check if file exists and show contents
+          # Check if file exists
           if [ ! -f "$RULESET_FILE" ]; then
             echo "Error: Ruleset file not found at $RULESET_FILE"
             ls -la trendmicro/
             exit 1
           fi
           
-          echo "Content of ruleset file:"
-          cat $RULESET_FILE
-          
-          # Run the script with full error output
+          # Run the script only once and capture both output and exit code
           python -u trendmicro/scripts/create_ruleset.py
+          RESULT=$?
           
-          # Check if it was successful
-          if [ $? -eq 0 ] && grep -q "ruleset_id=" <(python -u trendmicro/scripts/create_ruleset.py); then
-            ruleset_id=$(python -u trendmicro/scripts/create_ruleset.py | grep "ruleset_id=" | cut -d'=' -f2)
+          if [ $RESULT -eq 0 ]; then
+            # Run again just to capture the ruleset_id
+            output=$(python -u trendmicro/scripts/create_ruleset.py | grep "ruleset_id=")
+            ruleset_id=$(echo "$output" | sed 's/ruleset_id=//')
+            
             echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
             echo "Successfully created ruleset with ID: $ruleset_id"
           else
-            echo "Script failed, exiting."
+            echo "Script failed with exit code $RESULT, exiting."
             exit 1
           fi
 
@@ -147,26 +147,26 @@ jobs:
           export POLICY_FILE=${{ env.POLICY_FILE }}
           export RULESET_ID=${{ env.RULESET_ID }}
           
-          # Check if file exists and show contents
+          # Check if file exists
           if [ ! -f "$POLICY_FILE" ]; then
             echo "Error: Policy file not found at $POLICY_FILE"
             ls -la trendmicro/
             exit 1
           fi
           
-          echo "Content of policy file:"
-          cat $POLICY_FILE
-          
-          # Run the script with full error output
+          # Run the script only once and capture both output and exit code
           python -u trendmicro/scripts/create_policy.py
+          RESULT=$?
           
-          # Check if it was successful
-          if [ $? -eq 0 ] && grep -q "policy_id=" <(python -u trendmicro/scripts/create_policy.py); then
-            policy_id=$(python -u trendmicro/scripts/create_policy.py | grep "policy_id=" | cut -d'=' -f2)
+          if [ $RESULT -eq 0 ]; then
+            # Run again just to capture the policy_id
+            output=$(python -u trendmicro/scripts/create_policy.py | grep "policy_id=")
+            policy_id=$(echo "$output" | sed 's/policy_id=//')
+            
             echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
             echo "Successfully created policy with ID: $policy_id"
           else
-            echo "Script failed, exiting."
+            echo "Script failed with exit code $RESULT, exiting."
             exit 1
           fi
 

@@ -5,45 +5,41 @@ import json
 import os
 import sys
 
-def create_policy():
+def create_ruleset():
     # Use the Container Security API Key instead of a separate token
     API_KEY = os.environ['API_KEY']
-    POLICY_FILE = os.environ['POLICY_FILE']
-    RULESET_ID = os.environ['RULESET_ID']
-    
+    RULESET_FILE = os.environ['RULESET_FILE']
+
     try:
-        with open(POLICY_FILE, 'r') as file:
-            policy_data = json.load(file)
+        with open(RULESET_FILE, 'r') as file:
+            ruleset_data = json.load(file)
     except FileNotFoundError:
-        print(f"Error: Policy file not found at {POLICY_FILE}")
+        print(f"Error: Ruleset file not found at {RULESET_FILE}")
         sys.exit(1)
     except json.JSONDecodeError:
-        print(f"Error: Invalid JSON in policy file {POLICY_FILE}")
+        print(f"Error: Invalid JSON in ruleset file {RULESET_FILE}")
         sys.exit(1)
     
-    # Replace placeholder with actual ruleset ID
-    if "ruleset" in policy_data and policy_data["ruleset"] == "RULESET_ID_PLACEHOLDER":
-        policy_data["ruleset"] = RULESET_ID
-    
-    url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
+    url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
     
     headers = {
         'Accept': 'application/json',
+        'api-version': 'v1',
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {API_KEY}'
     }
     
-    response = requests.post(url, headers=headers, data=json.dumps(policy_data))
+    response = requests.post(url, headers=headers, data=json.dumps(ruleset_data))
     
-    if response.status_code not in [200, 201]:
-        print(f"Error creating policy: {response.status_code}")
+    if response.status_code != 201:
+        print(f"Error creating ruleset: {response.status_code}")
         print(response.text)
         sys.exit(1)
         
     result = response.json()
     
-    print(f"Policy '{result['name']}' created with ID: {result['id']}")
-    print(f"policy_id={result['id']}")
+    print(f"Ruleset '{result['name']}' created with ID: {result['id']}")
+    print(f"ruleset_id={result['id']}")
 
 if __name__ == "__main__":
-    create_policy()
+    create_ruleset()

@@ -53,12 +53,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pyyaml
 
+      - name: Debug files
+        run: |
+          echo "Repository contents:"
+          ls -la
+          echo "Trendmicro directory contents:"
+          ls -la trendmicro/
+          echo "Trendmicro scripts directory contents:"
+          ls -la trendmicro/scripts/
+
       - name: Check if ruleset exists
         id: check-ruleset
         run: |
           export API_KEY=${{ env.API_KEY }}
           export RULESET_NAME=${{ env.RULESET_NAME }}
-          export RULESET_FILE=${{ env.RULESET_FILE }}
           
           # Run the Python script and capture its output
           output=$(python trendmicro/scripts/check_ruleset.py)
@@ -80,13 +88,28 @@ jobs:
           export API_KEY=${{ env.API_KEY }}
           export RULESET_FILE=${{ env.RULESET_FILE }}
           
-          # Run the Python script and capture its output
-          output=$(python trendmicro/scripts/create_ruleset.py)
-          echo "$output"
+          # Check if file exists
+          if [ ! -f "$RULESET_FILE" ]; then
+            echo "Error: Ruleset file not found at $RULESET_FILE"
+            ls -la trendmicro/
+            exit 1
+          fi
           
-          # Parse the output to set GitHub outputs
-          ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
-          echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+          # Run the script with error output captured
+          python trendmicro/scripts/create_policy.py 2>&1
+          
+          # If the script completed successfully, capture the output
+          if [ $? -eq 0 ]; then
+            output=$(python trendmicro/scripts/create_policy.py)
+            echo "$output"
+            
+            # Parse the output to set GitHub outputs
+            ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
+            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+          else
+            echo "Script failed, exiting."
+            exit 1
+          fi
 
       - name: Set ruleset ID
         id: set-ruleset-id
@@ -121,15 +144,30 @@ jobs:
           # Set environment variables for the script
           export API_KEY=${{ env.API_KEY }}
           export POLICY_FILE=${{ env.POLICY_FILE }}
-          export RULESET_ID=${{ steps.set-ruleset-id.outputs.ruleset_id }}
+          export RULESET_ID=${{ env.RULESET_ID }}
           
-          # Run the Python script and capture its output
-          output=$(python trendmicro/scripts/create_policy.py)
-          echo "$output"
+          # Check if file exists
+          if [ ! -f "$POLICY_FILE" ]; then
+            echo "Error: Policy file not found at $POLICY_FILE"
+            ls -la trendmicro/
+            exit 1
+          fi
           
-          # Parse the output to set GitHub outputs
-          policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
-          echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          # Run the script with error output captured
+          python trendmicro/scripts/create_ruleset.py 2>&1
+          
+          # If the script completed successfully, capture the output 
+          if [ $? -eq 0 ]; then
+            output=$(python trendmicro/scripts/create_ruleset.py)
+            echo "$output"
+            
+            # Parse the output to set GitHub outputs
+            policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          else
+            echo "Script failed, exiting."
+            exit 1
+          fi
 
       - name: Update Policy ID
         id: update-policy-id

@@ -26,7 +26,7 @@ def create_ruleset():
         try:
             with open(RULESET_FILE, 'r') as file:
                 content = file.read()
-                print(f"File content (first 200 chars): {content[:200]}...")
+                print(f"File content length: {len(content)} characters")
                 
                 # Try to parse as YAML
                 try:
@@ -36,19 +36,39 @@ def create_ruleset():
                     print(f"Error parsing YAML: {str(yaml_error)}")
                     sys.exit(1)
                 
-                # Extract rules from Kubernetes format
+                # Process the rules from the flat YAML format
                 rules = []
-                if ruleset_data and isinstance(ruleset_data, dict):
+                
+                # Check if this is a simple list of rules
+                if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
+                    rules_data = ruleset_data['rules']
+                    for rule in rules_data:
+                        rule_obj = {
+                            "id": rule.get('type', ''),  # Using 'type' as the rule ID
+                            "action": rule.get('action', 'log')  # Defaulting to 'log'
+                        }
+                        
+                        # Add any additional properties
+                        if 'properties' in rule:
+                            rule_obj['properties'] = rule['properties']
+                            
+                        # Add namespaces if present
+                        if 'namespaces' in rule:
+                            rule_obj['namespaces'] = rule['namespaces']
+                        
+                        rules.append(rule_obj)
+                # Check for Kubernetes format
+                elif isinstance(ruleset_data, dict) and 'apiVersion' in ruleset_data and 'kind' in ruleset_data:
                     if 'spec' in ruleset_data and 'definition' in ruleset_data['spec'] and 'rules' in ruleset_data['spec']['definition']:
                         rules_data = ruleset_data['spec']['definition']['rules']
                         for rule in rules_data:
                             if 'ruleID' in rule:
                                 rule_obj = {
                                     "id": rule.get('ruleID'),
-                                    "action": rule.get('mitigation', 'log')
+                                    "action": rule.get('mitigation', rule.get('action', 'log'))  # Try mitigation first, then action, default to log
                                 }
                                 rules.append(rule_obj)
-                    
+                
                 # Create the API payload
                 api_data = {
                     "name": RULESET_NAME,
@@ -56,7 +76,8 @@ def create_ruleset():
                     "rules": rules
                 }
                 
-                print(f"Prepared API request payload: {json.dumps(api_data, indent=2)}")
+                print(f"Prepared API request payload with {len(rules)} rules:")
+                print(json.dumps(api_data, indent=2))
                 
         except FileNotFoundError:
             print(f"Error: File not found at {RULESET_FILE}")
@@ -81,6 +102,7 @@ def create_ruleset():
             response = requests.post(url, headers=headers, json=api_data)
             
             print(f"API Response Status: {response.status_code}")
+            print(f"API Response Headers: {response.headers}")
             print(f"API Response Body: {response.text}")
             
             if response.status_code in [200, 201]:

@@ -36,6 +36,8 @@ env:
   RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
   POLICY_NAME: ${{ github.event.inputs.policy_name }}
   POLICY_ID: ""
+  POLICY_FILE: "trendmicro/policy.yaml"
+  RULESET_FILE: "trendmicro/runtimeruleset.yaml"
 
 jobs:
   manage-security-policies:
@@ -49,13 +51,14 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests pyyaml
 
       - name: Check if ruleset exists
         id: check-ruleset
         run: |
           export API_KEY=${{ env.API_KEY }}
           export RULESET_NAME=${{ env.RULESET_NAME }}
+          export RULESET_FILE=${{ env.RULESET_FILE }}
           
           # Run the Python script and capture its output
           output=$(python trendmicro/scripts/check_ruleset.py)
@@ -75,7 +78,7 @@ jobs:
         if: steps.check-ruleset.outputs.exists != 'true'
         run: |
           export API_KEY=${{ env.API_KEY }}
-          export RULESET_FILE="trendmicro/rulesets.json"
+          export RULESET_FILE=${{ env.RULESET_FILE }}
           
           # Run the Python script and capture its output
           output=$(python trendmicro/scripts/create_ruleset.py)
@@ -115,12 +118,9 @@ jobs:
         id: create-policy
         if: steps.check-policy.outputs.exists != 'true'
         run: |
-          # Copy the template to a working file
-          cp trendmicro/policy.json.template trendmicro/policy.json
-          
           # Set environment variables for the script
           export API_KEY=${{ env.API_KEY }}
-          export POLICY_FILE="trendmicro/policy.json"
+          export POLICY_FILE=${{ env.POLICY_FILE }}
           export RULESET_ID=${{ steps.set-ruleset-id.outputs.ruleset_id }}
           
           # Run the Python script and capture its output

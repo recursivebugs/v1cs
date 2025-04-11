@@ -1,492 +1,148 @@
-name: Container Security with Policy Management
+name: Deploy Container Security with Policy Management
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
-      image:
-        description: 'Docker image to scan (default: fafiorim/firefly:latest)'
+      cluster_name:
+        description: 'EKS Cluster Name'
+        required: true
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-west-2'
+        type: string
+      group_id:
+        description: 'Group ID'
         required: false
-        default: 'fafiorim/firefly:latest'
+        default: '00000000-0000-0000-0000-000000000001'
+        type: string
+      ruleset_name:
+        description: 'Ruleset Name'
+        required: false
+        default: 'DemoLogOnlyRuleset'
+        type: string
+      policy_name:
+        description: 'Policy Name'
+        required: false
+        default: 'DemoLogOnlyPolicy'
+        type: string
 
 env:
-  SECURITY_MODE: ${{ vars.SECURITY_MODE || 'protect' }}
-  DEFAULT_IMAGE: 'fafiorim/firefly:latest'
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name || vars.EKS_CLUSTER_NAME }}
+  AWS_REGION: ${{ github.event.inputs.region || vars.AWS_REGION }}
+  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
+  GROUP_ID: ${{ github.event.inputs.group_id }}
+  RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
+  POLICY_NAME: ${{ github.event.inputs.policy_name }}
+  POLICY_ID: ""
 
 jobs:
-  ###################################################################
-  # 1. MANAGE SECURITY POLICIES
-  ###################################################################
   manage-security-policies:
     runs-on: ubuntu-latest
+    outputs:
+      policy_id: ${{ steps.update-policy-id.outputs.policy_id }}
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyyaml requests
+          pip install requests
+
+      - name: Check if ruleset exists
+        id: check-ruleset
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_NAME=${{ env.RULESET_NAME }}
           
-      - name: Create security policies
-        env:
-          API_KEY: ${{ secrets.TMAS_API_KEY }}
-          POLICY_FILE: 'trendmicro/policy.yaml'
-          RULESET_FILE: 'trendmicro/runtimeruleset.yaml'
-        run: |
-          echo "Creating security policies using $POLICY_FILE and $RULESET_FILE"
-          if [ -f "trendmicro/scripts/create_ruleset.py" ]; then
-            python trendmicro/scripts/create_ruleset.py
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/check_ruleset.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          if echo "$output" | grep -q "exists=true"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
+            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
           else
-            # Sample policy creation script if one doesn't exist
-            cat > create_policy.py << 'EOF'
-            #!/usr/bin/env python3
-            import os
-            import yaml
-            import requests
-            import json
-
-            def create_policy():
-                API_KEY = os.environ['API_KEY']
-                POLICY_FILE = os.environ['POLICY_FILE']
-                RULESET_FILE = os.environ['RULESET_FILE']
-                
-                # Read policy configuration
-                with open(POLICY_FILE, 'r') as f:
-                    policy_config = yaml.safe_load(f)
-                
-                # Read ruleset configuration
-                with open(RULESET_FILE, 'r') as f:
-                    ruleset_config = yaml.safe_load(f)
-                
-                print(f"Policy configuration: {json.dumps(policy_config, indent=2)}")
-                print(f"Ruleset configuration: {json.dumps(ruleset_config, indent=2)}")
-                
-                # Here you would make API calls to create/update policies
-                # This is a placeholder for demonstration
-                print("Security policies and rulesets would be created here")
-                
-            if __name__ == "__main__":
-                create_policy()
-            EOF
-            
-            python create_policy.py
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
-      
-      - name: Policy Creation Summary
-        run: |
-          echo "## 🔐 Security Policy Management" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Policy Creation | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Ruleset Configuration | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
 
-  ###################################################################
-  # 2. DOWNLOAD CONTAINER IMAGE
-  ###################################################################
-  download-image:
+      - name: Create ruleset if it doesn't exist
+        id: create-ruleset
+        if: steps.check-ruleset.outputs.exists != 'true'
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_FILE="trendmicro/rulesets.json"
+          
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/create_ruleset.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
+          echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+
+      - name: Set ruleset ID
+        id: set-ruleset-id
+        run: |
+          RULESET_ID="${{ steps.check-ruleset.outputs.ruleset_id || steps.create-ruleset.outputs.ruleset_id }}"
+          echo "RULESET_ID=$RULESET_ID" >> $GITHUB_ENV
+          echo "ruleset_id=$RULESET_ID" >> $GITHUB_OUTPUT
+
+      - name: Check if policy exists
+        id: check-policy
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_NAME=${{ env.POLICY_NAME }}
+          
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/check_policy.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          if echo "$output" | grep -q "exists=true"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create policy if it doesn't exist
+        id: create-policy
+        if: steps.check-policy.outputs.exists != 'true'
+        run: |
+          # Copy the template to a working file
+          cp trendmicro/policy.json.template trendmicro/policy.json
+          
+          # Set environment variables for the script
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_FILE="trendmicro/policy.json"
+          export RULESET_ID=${{ steps.set-ruleset-id.outputs.ruleset_id }}
+          
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/create_policy.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+          echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+
+      - name: Update Policy ID
+        id: update-policy-id
+        run: |
+          POLICY_ID="${{ steps.check-policy.outputs.policy_id || steps.create-policy.outputs.policy_id }}"
+          echo "POLICY_ID=$POLICY_ID" >> $GITHUB_ENV
+          echo "policy_id=$POLICY_ID" >> $GITHUB_OUTPUT
+
+  deploy-container-security:
     needs: manage-security-policies
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        if: ${{ vars.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
-        uses: docker/login-action@v2
-        with:
-          username: ${{ vars.DOCKER_USERNAME || secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Pull image from Docker Hub
-        id: pull
-        run: |
-          # Set image name from inputs or use default
-          IMAGE_NAME="${{ github.event.inputs.image || env.DEFAULT_IMAGE }}"
-          echo "Using image: $IMAGE_NAME"
-          
-          # Pull the image
-          docker pull $IMAGE_NAME
-          
-          # Tag with a local name for easier handling
-          docker tag $IMAGE_NAME scan-target:latest
-          
-          # Save the image to a tar file
-          docker save scan-target:latest -o container-image.tar
-          
-          # Get image info for output
-          IMAGE_REPO=$(echo $IMAGE_NAME | cut -d':' -f1)
-          IMAGE_TAG=$(echo $IMAGE_NAME | cut -d':' -f2)
-          
-          # Write info for future use
-          echo "image_name=scan-target" >> $GITHUB_OUTPUT
-          echo "docker_image=$IMAGE_REPO" >> $GITHUB_OUTPUT
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "full_image=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          
-          # Get image details for summary
-          IMAGE_SIZE=$(docker images scan-target:latest --format "{{.Size}}")
-          IMAGE_ID=$(docker images scan-target:latest --format "{{.ID}}")
-          
-          # Write to step summary
-          echo "## 📥 Container Image Download" >> $GITHUB_STEP_SUMMARY
-          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Source | $IMAGE_NAME (Docker Hub) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image ID | $IMAGE_ID |" >> $GITHUB_STEP_SUMMARY
-          echo "| Size | $IMAGE_SIZE |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive | container-image.tar |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: container-image
-          path: container-image.tar
-          retention-days: 5
-
-  ###################################################################
-  # 3. SECURITY SCAN
-  ###################################################################
-  security-scan:
-    needs: download-image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download container image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: container-image
-          path: .
-
-      - name: Download TMAS installer
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/fafiorim/trend_tools/refs/heads/main/install_tmas.sh -o install_tmas.sh
-          chmod +x install_tmas.sh
-
-      - name: Install Artifact Scan CLI
-        run: ./install_tmas.sh
-
-      - name: Set TMAS_API_KEY
-        run: echo "TMAS_API_KEY=${{ secrets.TMAS_API_KEY }}" >> $GITHUB_ENV
-
-      - name: Run Full Security Scan
-        run: |
-          # Calculate tar archive hash
-          TAR_HASH=$(sha256sum container-image.tar | cut -d' ' -f1)
-          
-          # Run the scan and capture output
-          tmas scan docker-archive:container-image.tar -VMS --saveSBOM 2>&1 | tee tmas_output.log > scan-results.json
-          
-          # Create clean summary
-          echo "## 🔍 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Scanned Image | scan-target:latest |" >> $GITHUB_STEP_SUMMARY
-          echo "| Archive Hash | sha256:$TAR_HASH |" >> $GITHUB_STEP_SUMMARY
-          echo "| SBOM Generated | true |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload Scan Results and SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: all-scan-results
-          path: |
-            scan-results.json
-            **/SBOM_*.json
-            ./SBOM_*.json
-
-  ###################################################################
-  # 4. PARSE SCAN RESULTS
-  ###################################################################
-  parse-scan-results:
-    needs: security-scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Scan Results
-        uses: actions/download-artifact@v4
-        with:
-          name: all-scan-results
-          path: .
-
-      - name: Install jq
-        run: sudo apt-get update -y && sudo apt-get install -y jq
-
-      - name: Parse Results
-        run: |
-          jq '{ vulnerabilities: .vulnerabilities }' scan-results.json > vulnerability-scan-results.json
-          jq '{ malware: .malware }' scan-results.json > malware-scan-results.json
-          jq '{ secrets: .secrets }' scan-results.json > secret-scan-results.json
-          
-          echo "## 🧪 Scan Results Parsing" >> $GITHUB_STEP_SUMMARY
-          echo "Results have been split into separate files for detailed analysis by specialized jobs." >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload Parsed Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: parsed-results
-          path: |
-            vulnerability-scan-results.json
-            malware-scan-results.json
-            secret-scan-results.json
-
-  ###################################################################
-  # 5. VULNERABILITY SCANNER
-  ###################################################################
-  vulnerability-scanner:
-    needs: parse-scan-results
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download policy files for evaluation
-        if: ${{ vars.USE_POLICY_FILES == 'true' }}
-        run: |
-          # This step would download or reference policy files for evaluation against scan results
-          echo "Using policy files for vulnerability evaluation"
-
-      - name: Download Parsed Results
-        uses: actions/download-artifact@v4
-        with:
-          name: parsed-results
-          path: .
-
-      - name: Process Vulnerability Results
-        id: vuln_check
-        run: |
-          echo "## 🛡️ Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
-          
-          # Check if jq is installed
-          if ! command -v jq &> /dev/null; then
-            sudo apt-get update -y && sudo apt-get install -y jq
-          fi
-          
-          CRITICAL=$(jq -r '.vulnerabilities.criticalCount' vulnerability-scan-results.json)
-          HIGH=$(jq -r '.vulnerabilities.highCount' vulnerability-scan-results.json)
-          MEDIUM=$(jq -r '.vulnerabilities.mediumCount' vulnerability-scan-results.json)
-          LOW=$(jq -r '.vulnerabilities.lowCount' vulnerability-scan-results.json)
-          TOTAL=$(jq -r '.vulnerabilities.totalVulnCount' vulnerability-scan-results.json)
-          
-          echo "### Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
-          echo "| High | $HIGH |" >> $GITHUB_STEP_SUMMARY
-          echo "| Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
-          echo "| Low | $LOW |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$CRITICAL" -gt 0 ]; then
-            echo "### ❌ Critical Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            jq -r '.vulnerabilities.findings[] | select(.severity=="CRITICAL") | "- "+.id+": "+.description' vulnerability-scan-results.json >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            
-            if [ "${{ env.SECURITY_MODE }}" = "protect" ]; then
-              echo "Critical vulnerabilities found in PROTECT mode! Failing..."
-              exit 1
-            else
-              echo "Running in LOG mode - documenting findings only"
-            fi
-          else
-            echo "### ✅ No Critical Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload Vulnerability Results
-        if: success() || failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vulnerability-scan-results
-          path: vulnerability-scan-results.json
-
-  ###################################################################
-  # 6. MALWARE SCANNER
-  ###################################################################
-  malware-scanner:
-    needs: parse-scan-results
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Parsed Results
-        uses: actions/download-artifact@v4
-        with:
-          name: parsed-results
-          path: .
-
-      - name: Process Malware Results
-        id: malware_check
-        run: |
-          echo "## 🦠 Malware Scan Results" >> $GITHUB_STEP_SUMMARY
-          
-          # Check if jq is installed
-          if ! command -v jq &> /dev/null; then
-            sudo apt-get update -y && sudo apt-get install -y jq
-          fi
-          
-          FINDINGS_COUNT=$(jq -r '.malware.findings | length' malware-scan-results.json)
-          
-          echo "### Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Malware Findings | $FINDINGS_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | $([ "$FINDINGS_COUNT" -eq 0 ] && echo "✅ Clean" || echo "❌ Malware Detected") |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$FINDINGS_COUNT" -gt 0 ]; then
-            echo "### ❌ Malware Details" >> $GITHUB_STEP_SUMMARY
-            echo "| File | Malware |" >> $GITHUB_STEP_SUMMARY
-            echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
-            jq -r '.malware.findings[] | "| \(.fileName) | \(.foundMalwares[0].malwareName) |"' malware-scan-results.json >> $GITHUB_STEP_SUMMARY
-            
-            if [ "${{ env.SECURITY_MODE }}" = "protect" ]; then
-              echo "Malware detected in PROTECT mode! Failing..."
-              exit 1
-            else
-              echo "Running in LOG mode - documenting findings only"
-            fi
-          else
-            echo "### ✅ No Malware Detected" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload Malware Results
-        if: success() || failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: malware-scan-results
-          path: malware-scan-results.json
-
-  ###################################################################
-  # 7. SECRETS SCANNER
-  ###################################################################
-  secrets-scanner:
-    needs: parse-scan-results
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Parsed Results
-        uses: actions/download-artifact@v4
-        with:
-          name: parsed-results
-          path: .
-
-      - name: Process Secrets Results
-        id: secrets_check
-        run: |
-          echo "## 🔒 Secrets Scan Results" >> $GITHUB_STEP_SUMMARY
-          
-          # Check if jq is installed
-          if ! command -v jq &> /dev/null; then
-            sudo apt-get update -y && sudo apt-get install -y jq
-          fi
-          
-          TOTAL_FILES=$(jq -r '.secrets.totalFilesScanned' secret-scan-results.json)
-          UNMITIGATED=$(jq -r '.secrets.unmitigatedFindingsCount' secret-scan-results.json)
-          OVERRIDDEN=$(jq -r '.secrets.overriddenFindingsCount' secret-scan-results.json)
-          
-          echo "### Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Files Scanned | $TOTAL_FILES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Unmitigated Findings | $UNMITIGATED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Overridden Findings | $OVERRIDDEN |" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | $([ "$UNMITIGATED" -eq 0 ] && echo "✅ Clean" || echo "❌ Secrets Detected") |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$UNMITIGATED" -gt 0 ]; then
-            echo "### ❌ Secret Details" >> $GITHUB_STEP_SUMMARY
-            echo "| Rule | Path |" >> $GITHUB_STEP_SUMMARY
-            echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-            jq -r '.secrets.findings.unmitigated[] | "| \(.ruleID) | \(.location.path) |"' secret-scan-results.json >> $GITHUB_STEP_SUMMARY
-            
-            if [ "${{ env.SECURITY_MODE }}" = "protect" ]; then
-              echo "Secrets detected in PROTECT mode! Failing..."
-              exit 1
-            else
-              echo "Running in LOG mode - documenting findings only"
-            fi
-          else
-            echo "### ✅ No Secrets Detected" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload Secrets Results
-        if: success() || failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: secrets-scan-results
-          path: secret-scan-results.json
-
-  ###################################################################
-  # 8. SBOM SCANNER
-  ###################################################################
-  sbom-scanner:
-    needs: security-scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download All Results
-        uses: actions/download-artifact@v4
-        with:
-          name: all-scan-results
-          path: .
-
-      - name: Process SBOM Results
-        run: |
-          echo "## 📋 SBOM Results" >> $GITHUB_STEP_SUMMARY
-          
-          # Find SBOM files
-          SBOM_FILES=$(find . -name "SBOM_*.json" | wc -l)
-          
-          if [ "$SBOM_FILES" -gt 0 ]; then
-            echo "✅ SBOM Generated Successfully" >> $GITHUB_STEP_SUMMARY
-            echo "Number of SBOM files: $SBOM_FILES" >> $GITHUB_STEP_SUMMARY
-            
-            # If jq is available, extract some basic info
-            if command -v jq &> /dev/null; then
-              SBOM_FILE=$(find . -name "SBOM_*.json" | head -1)
-              echo "SBOM File: $SBOM_FILE" >> $GITHUB_STEP_SUMMARY
-              
-              # Add sample of packages if available
-              PACKAGE_COUNT=$(jq '.packages | length' "$SBOM_FILE" 2>/dev/null || echo "Unknown")
-              echo "Number of packages: $PACKAGE_COUNT" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "❌ No SBOM files found" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload SBOM Files
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-results
-          path: |
-            **/SBOM_*.json
-            ./SBOM_*.json
-        continue-on-error: true
-
-  ###################################################################
-  # 9. DEPLOY TO KUBERNETES
-  ###################################################################
-  deploy-to-k8s:
-    needs:
-      - vulnerability-scanner
-      - malware-scanner
-      - secrets-scanner
-      - sbom-scanner
-      - download-image
-    runs-on: ubuntu-latest
-    if: |
-      always() &&
-      (needs.vulnerability-scanner.result == 'success' || needs.vulnerability-scanner.result == 'skipped' || env.SECURITY_MODE != 'protect') &&
-      (needs.malware-scanner.result == 'success' || needs.malware-scanner.result == 'skipped' || env.SECURITY_MODE != 'protect') &&
-      (needs.secrets-scanner.result == 'success' || needs.secrets-scanner.result == 'skipped' || env.SECURITY_MODE != 'protect') &&
-      (needs.sbom-scanner.result == 'success' || needs.sbom-scanner.result == 'skipped' || env.SECURITY_MODE != 'protect')
-    steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
@@ -494,165 +150,101 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
-
-      - name: Update kubeconfig
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kube config
         run: |
-          if [ -z "${{ vars.EKS_CLUSTER_NAME }}" ]; then
-            echo "Error: EKS_CLUSTER_NAME variable is not set"
-            exit 1
-          fi
-          
-          CLUSTER_NAME="${{ vars.EKS_CLUSTER_NAME }}"
-          # Extract cluster name if it contains @ or other suffixes
-          if [[ "$CLUSTER_NAME" == *"@"* ]]; then
-            CLUSTER_NAME=$(echo $CLUSTER_NAME | cut -d'@' -f2 | cut -d'.' -f1)
-          fi
-          
-          echo "Using cluster name: $CLUSTER_NAME"
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ vars.AWS_REGION || 'us-west-2' }}
-
-      - name: Verify Kubernetes connection
-        run: |
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
           kubectl cluster-info
-          kubectl config current-context
+          kubectl get nodes
 
-      - name: Set image variables
-        id: set-image
+      - name: Setup Helm
         run: |
-          # Use the image from previous job
-          DOCKER_IMAGE="${{ github.event.inputs.image || env.DEFAULT_IMAGE }}"
-          echo "full_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh
+          helm version
 
-      - name: Create Kubernetes ConfigMap and Secrets
+      - name: Create overrides file
         run: |
-          # Create ConfigMap
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: ${{ vars.APP_NAME || 'firefly' }}-config
-          data:
-            ENV: "${{ vars.APP_ENV || 'production' }}"
-            LOG_LEVEL: "${{ vars.LOG_LEVEL || 'info' }}"
+          cat <<EOF > overrides.yaml
+          cloudOne:
+            clusterRegistrationKey: true
+            groupId: ${{ env.GROUP_ID }}
+            policyId: ${{ needs.manage-security-policies.outputs.policy_id }}
+            endpoint: https://container.us-1.cloudone.trendmicro.com
+            exclusion:
+              namespaces: [kube-system]
+            runtimeSecurity:
+              enabled: true
+            vulnerabilityScanning:
+              enabled: true
+            malwareScanning:
+              enabled: true
+            inventoryCollection:
+              enabled: true
           EOF
           
-          # Create Secrets
-          cat <<EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: ${{ vars.APP_NAME || 'firefly' }}-secrets
-          type: Opaque
-          data:
-            app-secret: $(echo -n "${{ secrets.APP_SECRET || 'default-secret' }}" | base64)
-          EOF
+          echo "Created overrides.yaml with the following content:"
+          cat overrides.yaml
 
-      - name: Create Deployment and Service
-        id: create_deployment
+      - name: Create namespace and secret
         run: |
-          APP_NAME="${{ vars.APP_NAME || 'firefly' }}"
-          FULL_IMAGE="${{ steps.set-image.outputs.full_image }}"
+          kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
           
-          # Create deployment.yaml
-          cat > deployment.yaml <<EOF
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: $APP_NAME-deployment
-            labels:
-              app: $APP_NAME
-          spec:
-            replicas: ${{ vars.REPLICAS || 1 }}
-            selector:
-              matchLabels:
-                app: $APP_NAME
-            template:
-              metadata:
-                labels:
-                  app: $APP_NAME
-              spec:
-                containers:
-                - name: $APP_NAME
-                  image: $FULL_IMAGE
-                  ports:
-                  - containerPort: ${{ vars.CONTAINER_PORT || 8080 }}
-                  env:
-                  - name: ENV
-                    valueFrom:
-                      configMapKeyRef:
-                        name: $APP_NAME-config
-                        key: ENV
-                  - name: LOG_LEVEL
-                    valueFrom:
-                      configMapKeyRef:
-                        name: $APP_NAME-config
-                        key: LOG_LEVEL
-                  - name: APP_SECRET
-                    valueFrom:
-                      secretKeyRef:
-                        name: $APP_NAME-secrets
-                        key: app-secret
-          EOF
-          
-          # Create service.yaml
-          cat > service.yaml <<EOF
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: $APP_NAME-service
-          spec:
-            selector:
-              app: $APP_NAME
-            ports:
-            - port: ${{ vars.SERVICE_PORT || 80 }}
-              targetPort: ${{ vars.CONTAINER_PORT || 8080 }}
-            type: ClusterIP
-          EOF
-
-      - name: Deploy to Kubernetes
-        run: |
-          APP_NAME="${{ vars.APP_NAME || 'firefly' }}"
-          
-          # Apply Kubernetes configurations
-          kubectl apply -f deployment.yaml
-          kubectl apply -f service.yaml
-          
-          # Wait for deployment to complete
-          kubectl rollout status deployment/$APP_NAME-deployment --timeout=300s
-          
-          echo "## 🚀 Kubernetes Deployment Results" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Deployment | ✅ Deployed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | ✅ Created |" >> $GITHUB_STEP_SUMMARY
-          
-          # Get pod details
-          PODS=$(kubectl get pods -l app=$APP_NAME -o jsonpath='{.items[*].metadata.name}')
-          
-          echo "### Pod Details" >> $GITHUB_STEP_SUMMARY
-          echo "```" >> $GITHUB_STEP_SUMMARY
-          kubectl get pods -l app=$APP_NAME >> $GITHUB_STEP_SUMMARY
-          echo "```" >> $GITHUB_STEP_SUMMARY
-          
-          # Get service details
-          echo "### Service Details" >> $GITHUB_STEP_SUMMARY
-          echo "```" >> $GITHUB_STEP_SUMMARY
-          kubectl get service $APP_NAME-service >> $GITHUB_STEP_SUMMARY
-          echo "```" >> $GITHUB_STEP_SUMMARY
-
-      - name: Workflow Summary
-        run: |
-          echo "## 🔄 Workflow Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Policy Management | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image Download | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Security Scan | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
-          echo "| EKS Deployment | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ env.SECURITY_MODE }}" = "protect" ]; then
-            echo "| Security Mode | 🛡️ PROTECT |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Security Mode | 📝 LOG |" >> $GITHUB_STEP_SUMMARY
+          # Check if secret already exists and delete it if it does
+          if kubectl get secret trendmicro-container-security-registration-key -n trendmicro-system &> /dev/null; then
+            echo "Secret already exists, deleting it first..."
+            kubectl delete secret trendmicro-container-security-registration-key -n trendmicro-system
           fi
+          
+          # Create the secret with the API key
+          kubectl create secret generic trendmicro-container-security-registration-key -n trendmicro-system --from-literal=registration.key=${{ env.API_KEY }}
+          
+          echo "Secret created successfully."
+
+      - name: Deploy with Helm
+        run: |
+          echo "Installing Trend Micro Container Security with Helm..."
+          
+          helm install \
+            trendmicro \
+            --namespace trendmicro-system \
+            --values overrides.yaml \
+            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
+          
+          echo "Helm installation completed."
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for pods to be ready..."
+          sleep 30
+          
+          echo "Checking Trend Micro Container Security deployment:"
+          kubectl get pods -n trendmicro-system
+          
+          echo "Checking Trend Micro Container Security services:"
+          kubectl get services -n trendmicro-system
+          
+          echo "Deployment verification complete."
+
+      - name: Save deployment info
+        run: |
+          cat <<EOF > deployment-info.json
+          {
+            "clusterName": "$CLUSTER_NAME",
+            "region": "$AWS_REGION",
+            "policyId": "${{ needs.manage-security-policies.outputs.policy_id }}",
+            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+          
+          echo "Deployment information saved:"
+          cat deployment-info.json
+
+      - name: Upload deployment info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info
+          path: deployment-info.json
+          retention-days: 90

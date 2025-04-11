@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import requests
 import json
-import yaml  # Add YAML support
+import yaml
 import os
 import sys
 
@@ -9,31 +9,34 @@ def create_ruleset():
     # Use the Container Security API Key instead of a separate token
     API_KEY = os.environ['API_KEY']
     RULESET_FILE = os.environ['RULESET_FILE']
+    RULESET_NAME = os.environ.get('RULESET_NAME', 'DemoLogOnlyRuleset')
     
     try:
         with open(RULESET_FILE, 'r') as file:
-            # Try to load as YAML
-            ruleset_data = yaml.safe_load(file)
+            # Load the Kubernetes-formatted YAML
+            k8s_ruleset = yaml.safe_load(file)
+            print("Loaded ruleset data (Kubernetes format):")
+            print(json.dumps(k8s_ruleset, indent=2))
             
-            # Print the data for debugging
-            print("Loaded ruleset data:")
-            print(json.dumps(ruleset_data, indent=2))
+            # Convert from Kubernetes format to Trend Micro API format
+            # Extract the rules from the Kubernetes CR
+            rules = []
+            if k8s_ruleset.get("spec", {}).get("definition", {}).get("rules"):
+                for rule in k8s_ruleset["spec"]["definition"]["rules"]:
+                    rules.append({
+                        "id": rule.get("ruleID", ""),
+                        "action": rule.get("mitigation", "log")
+                    })
             
-            # Ensure required fields are present
-            if "name" not in ruleset_data:
-                print("Error: 'name' field is required in ruleset")
-                sys.exit(1)
-            
-            # Create a properly formatted ruleset object that the API expects
-            formatted_ruleset = {
-                "name": ruleset_data.get("name"),
-                "description": ruleset_data.get("description", ""),
-                "profiles": ruleset_data.get("profiles", [])
+            # Create the properly formatted ruleset for Trend Micro API
+            api_ruleset = {
+                "name": RULESET_NAME,
+                "description": f"Created from {RULESET_FILE}",
+                "rules": rules
             }
             
-            # Print the formatted data
-            print("Formatted ruleset data:")
-            print(json.dumps(formatted_ruleset, indent=2))
+            print("Converted ruleset for API:")
+            print(json.dumps(api_ruleset, indent=2))
             
     except FileNotFoundError:
         print(f"Error: Ruleset file not found at {RULESET_FILE}")
@@ -55,10 +58,10 @@ def create_ruleset():
     }
     
     try:
-        response = requests.post(url, headers=headers, json=formatted_ruleset)
+        print("Sending request to API...")
+        response = requests.post(url, headers=headers, json=api_ruleset)
         
         print(f"API Response Status Code: {response.status_code}")
-        print(f"API Response Headers: {response.headers}")
         print(f"API Response Body: {response.text}")
         
         if response.status_code != 201:

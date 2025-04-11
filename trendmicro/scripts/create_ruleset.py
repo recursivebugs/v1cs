@@ -1,138 +1,289 @@
-#!/usr/bin/env python3
-import requests
-import json
-import yaml
-import os
-import sys
-import traceback
+name: Deploy Container Security with Policy Management
 
-def create_ruleset():
-    try:
-        # Get environment variables
-        API_KEY = os.environ.get('API_KEY')
-        RULESET_FILE = os.environ.get('RULESET_FILE')
-        RULESET_NAME = os.environ.get('RULESET_NAME', 'Default Ruleset')
-        
-        if not API_KEY:
-            print("Error: API_KEY environment variable is not set")
-            sys.exit(1)
-            
-        if not RULESET_FILE:
-            print("Error: RULESET_FILE environment variable is not set")
-            sys.exit(1)
-            
-        print(f"Reading ruleset file: {RULESET_FILE}")
-        
-        try:
-            with open(RULESET_FILE, 'r') as file:
-                content = file.read()
-                print(f"File content length: {len(content)} characters")
-                
-                # Try to parse as YAML
-                try:
-                    ruleset_data = yaml.safe_load(content)
-                    print("Successfully parsed YAML file")
-                except Exception as yaml_error:
-                    print(f"Error parsing YAML: {str(yaml_error)}")
-                    sys.exit(1)
-                
-                # Process the rules from the flat YAML format
-                rules = []
-                
-                # Check if this is a simple list of rules
-                if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
-                    rules_data = ruleset_data['rules']
-                    for rule in rules_data:
-                        rule_obj = {
-                            "id": rule.get('type', ''),  # Using 'type' as the rule ID
-                            "action": rule.get('action', 'log')  # Defaulting to 'log'
-                        }
-                        
-                        # Add any additional properties
-                        if 'properties' in rule:
-                            rule_obj['properties'] = rule['properties']
-                            
-                        # Add namespaces if present
-                        if 'namespaces' in rule:
-                            rule_obj['namespaces'] = rule['namespaces']
-                        
-                        rules.append(rule_obj)
-                # Check for Kubernetes format
-                elif isinstance(ruleset_data, dict) and 'apiVersion' in ruleset_data and 'kind' in ruleset_data:
-                    if 'spec' in ruleset_data and 'definition' in ruleset_data['spec'] and 'rules' in ruleset_data['spec']['definition']:
-                        rules_data = ruleset_data['spec']['definition']['rules']
-                        for rule in rules_data:
-                            if 'ruleID' in rule:
-                                rule_obj = {
-                                    "id": rule.get('ruleID'),
-                                    "action": rule.get('mitigation', rule.get('action', 'log'))  # Try mitigation first, then action, default to log
-                                }
-                                rules.append(rule_obj)
-                
-                # Create the API payload
-                api_data = {
-                    "name": RULESET_NAME,
-                    "description": f"Created from {RULESET_FILE}",
-                    "rules": rules
-                }
-                
-                print(f"Prepared API request payload with {len(rules)} rules:")
-                print(json.dumps(api_data, indent=2))
-                
-        except FileNotFoundError:
-            print(f"Error: File not found at {RULESET_FILE}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error reading or parsing file: {str(e)}")
-            traceback.print_exc()
-            sys.exit(1)
-            
-        # Make API request
-        print("Sending request to API...")
-        url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
-        
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'api-version': 'v1',
-            'Authorization': f'Bearer {API_KEY}'
-        }
-        
-        try:
-            response = requests.post(url, headers=headers, json=api_data)
-            
-            print(f"API Response Status: {response.status_code}")
-            print(f"API Response Headers: {response.headers}")
-            print(f"API Response Body: {response.text}")
-            
-            if response.status_code in [200, 201]:
-                try:
-                    result = response.json()
-                    if isinstance(result, dict) and 'id' in result:
-                        print(f"Ruleset created successfully with ID: {result['id']}")
-                        print(f"ruleset_id={result['id']}")
-                        return
-                    else:
-                        print(f"API returned success but response format unexpected: {result}")
-                except Exception as e:
-                    print(f"API returned success but could not parse response: {str(e)}")
-                    
-                # Use placeholder ID if we can't parse the response
-                print("ruleset_id=CREATED_BUT_ID_UNKNOWN")
-            else:
-                print(f"Error creating ruleset: HTTP {response.status_code}")
-                print(f"Response: {response.text}")
-                sys.exit(1)
-                
-        except Exception as e:
-            print(f"Error making API request: {str(e)}")
-            traceback.print_exc()
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'EKS Cluster Name'
+        required: true
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-west-2'
+        type: string
+      group_id:
+        description: 'Group ID'
+        required: false
+        default: '00000000-0000-0000-0000-000000000001'
+        type: string
+      ruleset_name:
+        description: 'Ruleset Name'
+        required: false
+        default: 'DemoLogOnlyRuleset'
+        type: string
+      policy_name:
+        description: 'Policy Name'
+        required: false
+        default: 'DemoLogOnlyPolicy'
+        type: string
 
-if __name__ == "__main__":
-    create_ruleset()
+env:
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name || vars.EKS_CLUSTER_NAME }}
+  AWS_REGION: ${{ github.event.inputs.region || vars.AWS_REGION }}
+  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
+  GROUP_ID: ${{ github.event.inputs.group_id }}
+  RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
+  POLICY_NAME: ${{ github.event.inputs.policy_name }}
+  POLICY_ID: ""
+  POLICY_FILE: "trendmicro/policy.yaml"
+  RULESET_FILE: "trendmicro/runtimeruleset.yaml"
+
+jobs:
+  manage-security-policies:
+    runs-on: ubuntu-latest
+    outputs:
+      policy_id: ${{ steps.update-policy-id.outputs.policy_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pyyaml
+
+      - name: Debug files
+        run: |
+          echo "Repository contents:"
+          ls -la
+          echo "Trendmicro directory contents:"
+          ls -la trendmicro/
+          echo "Trendmicro scripts directory contents:"
+          ls -la trendmicro/scripts/
+
+      - name: Check if ruleset exists
+        id: check-ruleset
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_NAME=${{ env.RULESET_NAME }}
+          
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/check_ruleset.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          if echo "$output" | grep -q "exists=true"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
+            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create ruleset if it doesn't exist
+        id: create-ruleset
+        if: steps.check-ruleset.outputs.exists != 'true'
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_FILE=${{ env.RULESET_FILE }}
+          export RULESET_NAME="${{ env.RULESET_NAME }}"
+          
+          # Check if file exists
+          if [ ! -f "$RULESET_FILE" ]; then
+            echo "Error: Ruleset file not found at $RULESET_FILE"
+            ls -la trendmicro/
+            exit 1
+          fi
+          
+          # Run the script only once and capture both output and exit code
+          python -u trendmicro/scripts/create_ruleset.py
+          RESULT=$?
+          
+          if [ $RESULT -eq 0 ]; then
+            # Run again just to capture the ruleset_id
+            output=$(python -u trendmicro/scripts/create_ruleset.py | grep "ruleset_id=")
+            ruleset_id=$(echo "$output" | sed 's/ruleset_id=//')
+            
+            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+            echo "Successfully created ruleset with ID: $ruleset_id"
+          else
+            echo "Script failed with exit code $RESULT, exiting."
+            exit 1
+          fi
+
+      - name: Set ruleset ID
+        id: set-ruleset-id
+        run: |
+          RULESET_ID="${{ steps.check-ruleset.outputs.ruleset_id || steps.create-ruleset.outputs.ruleset_id }}"
+          echo "RULESET_ID=$RULESET_ID" >> $GITHUB_ENV
+          echo "ruleset_id=$RULESET_ID" >> $GITHUB_OUTPUT
+
+      - name: Check if policy exists
+        id: check-policy
+        run: |
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_NAME=${{ env.POLICY_NAME }}
+          
+          # Run the Python script and capture its output
+          output=$(python trendmicro/scripts/check_policy.py)
+          echo "$output"
+          
+          # Parse the output to set GitHub outputs
+          if echo "$output" | grep -q "exists=true"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create policy if it doesn't exist
+        id: create-policy
+        if: steps.check-policy.outputs.exists != 'true'
+        run: |
+          # Set environment variables for the script
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_FILE=${{ env.POLICY_FILE }}
+          export RULESET_ID=${{ env.RULESET_ID }}
+          
+          # Check if file exists
+          if [ ! -f "$POLICY_FILE" ]; then
+            echo "Error: Policy file not found at $POLICY_FILE"
+            ls -la trendmicro/
+            exit 1
+          fi
+          
+          # Run the script only once and capture both output and exit code
+          python -u trendmicro/scripts/create_policy.py
+          RESULT=$?
+          
+          if [ $RESULT -eq 0 ]; then
+            # Run again just to capture the policy_id
+            output=$(python -u trendmicro/scripts/create_policy.py | grep "policy_id=")
+            policy_id=$(echo "$output" | sed 's/policy_id=//')
+            
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+            echo "Successfully created policy with ID: $policy_id"
+          else
+            echo "Script failed with exit code $RESULT, exiting."
+            exit 1
+          fi
+
+      - name: Update Policy ID
+        id: update-policy-id
+        run: |
+          POLICY_ID="${{ steps.check-policy.outputs.policy_id || steps.create-policy.outputs.policy_id }}"
+          echo "POLICY_ID=$POLICY_ID" >> $GITHUB_ENV
+          echo "policy_id=$POLICY_ID" >> $GITHUB_OUTPUT
+
+  deploy-container-security:
+    needs: manage-security-policies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kube config
+        run: |
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Setup Helm
+        run: |
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh
+          helm version
+
+      - name: Create overrides file
+        run: |
+          cat <<EOF > overrides.yaml
+          cloudOne:
+            clusterRegistrationKey: true
+            groupId: ${{ env.GROUP_ID }}
+            policyId: ${{ needs.manage-security-policies.outputs.policy_id }}
+            endpoint: https://container.us-1.cloudone.trendmicro.com
+            exclusion:
+              namespaces: [kube-system]
+            runtimeSecurity:
+              enabled: true
+            vulnerabilityScanning:
+              enabled: true
+            malwareScanning:
+              enabled: true
+            inventoryCollection:
+              enabled: true
+          EOF
+          
+          echo "Created overrides.yaml with the following content:"
+          cat overrides.yaml
+
+      - name: Create namespace and secret
+        run: |
+          kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Check if secret already exists and delete it if it does
+          if kubectl get secret trendmicro-container-security-registration-key -n trendmicro-system &> /dev/null; then
+            echo "Secret already exists, deleting it first..."
+            kubectl delete secret trendmicro-container-security-registration-key -n trendmicro-system
+          fi
+          
+          # Create the secret with the API key
+          kubectl create secret generic trendmicro-container-security-registration-key -n trendmicro-system --from-literal=registration.key=${{ env.API_KEY }}
+          
+          echo "Secret created successfully."
+
+      - name: Deploy with Helm
+        run: |
+          echo "Installing Trend Micro Container Security with Helm..."
+          
+          helm install \
+            trendmicro \
+            --namespace trendmicro-system \
+            --values overrides.yaml \
+            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
+          
+          echo "Helm installation completed."
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for pods to be ready..."
+          sleep 30
+          
+          echo "Checking Trend Micro Container Security deployment:"
+          kubectl get pods -n trendmicro-system
+          
+          echo "Checking Trend Micro Container Security services:"
+          kubectl get services -n trendmicro-system
+          
+          echo "Deployment verification complete."
+
+      - name: Save deployment info
+        run: |
+          cat <<EOF > deployment-info.json
+          {
+            "clusterName": "$CLUSTER_NAME",
+            "region": "$AWS_REGION",
+            "policyId": "${{ needs.manage-security-policies.outputs.policy_id }}",
+            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+          
+          echo "Deployment information saved:"
+          cat deployment-info.json
+
+      - name: Upload deployment info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info
+          path: deployment-info.json
+          retention-days: 90

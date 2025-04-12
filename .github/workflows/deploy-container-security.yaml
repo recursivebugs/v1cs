@@ -6,6 +6,7 @@ on:
       cluster_name:
         description: 'EKS Cluster Name'
         required: true
+        default: 'DemoCluster001'
         type: string
       region:
         description: 'AWS Region'
@@ -20,10 +21,12 @@ on:
       ruleset_name:
         description: 'Ruleset Name'
         required: true
+        default: 'DemoRuleSetLogOnly'
         type: string
       policy_name:
         description: 'Policy Name'
         required: true
+        default: 'DemoPolicyLogOnly'
         type: string
 
 env:

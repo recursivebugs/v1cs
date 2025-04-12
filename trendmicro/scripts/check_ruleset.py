@@ -12,34 +12,38 @@ def check_ruleset():
         RULESET_NAME = os.environ.get('RULESET_NAME')
 
         if not API_KEY or not RULESET_NAME:
-            print("Missing required environment variables: API_KEY, RULESET_NAME")
+            print("Missing API_KEY or RULESET_NAME env vars")
             sys.exit(1)
 
         print(f"Checking for existing ruleset: {RULESET_NAME}")
 
-        url = f"https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets?name={RULESET_NAME}"
+        url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
         headers = {
             'Accept': 'application/json',
             'Authorization': f'Bearer {API_KEY}'
         }
 
         response = requests.get(url, headers=headers)
-
         print(f"API Response Status: {response.status_code}")
         print(f"API Response Body: {response.text}")
 
-        if response.status_code == 200:
-            result = response.json()
-
-            if result.get("totalCount", 0) > 0 and "rulesets" in result:
-                ruleset_id = result["rulesets"][0]["id"]
-                print(f"exists=true")
-                print(f"ruleset_id={ruleset_id}")
-            else:
-                print("exists=false")
-        else:
-            print(f"Failed to check ruleset: HTTP {response.status_code}")
+        if response.status_code != 200:
+            print(f"Error querying API: HTTP {response.status_code}")
             sys.exit(1)
+
+        result = response.json()
+        found_id = ""
+
+        for item in result.get("items", []):
+            if item.get("name") == RULESET_NAME:
+                found_id = item.get("id")
+                break
+
+        if found_id:
+            print("exists=true")
+            print(f"ruleset_id={found_id}")
+        else:
+            print("exists=false")
 
     except Exception as e:
         print(f"Unexpected error: {str(e)}")

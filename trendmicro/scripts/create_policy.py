@@ -30,6 +30,7 @@ def create_policy():
         API_KEY = os.environ.get('API_KEY')
         POLICY_FILE = os.environ.get('POLICY_FILE')
         RULESET_ID = os.environ.get('RULESET_ID')
+        RULESET_NAME = os.environ.get('RULESET_NAME', 'Default Ruleset')
 
         if not API_KEY or not POLICY_FILE or not RULESET_ID:
             print("Missing required environment variables: API_KEY, POLICY_FILE, RULESET_ID")
@@ -41,6 +42,7 @@ def create_policy():
 
         print(f"Reading policy file: {POLICY_FILE}")
         print(f"Using ruleset ID: {RULESET_ID}")
+        print(f"Using ruleset NAME: {RULESET_NAME}")
 
         if not os.path.isfile(POLICY_FILE):
             print(f"Error: Policy file not found at {POLICY_FILE}")
@@ -48,15 +50,12 @@ def create_policy():
 
         policy_data = load_policy_file(POLICY_FILE)
 
-        # Auto-fix rulesetids structure if needed
-        if "runtime" in policy_data and "rulesetids" in policy_data["runtime"]:
-            fixed_rulesetids = []
-            for rid in policy_data["runtime"]["rulesetids"]:
-                if isinstance(rid, dict) and "id" in rid:
-                    fixed_rulesetids.append(rid["id"])
-                else:
-                    fixed_rulesetids.append(rid)
-            policy_data["runtime"]["rulesetids"] = fixed_rulesetids
+        # Auto-fix rulesetids structure
+        if "runtime" in policy_data:
+            policy_data["runtime"]["rulesetids"] = [{
+                "name": RULESET_NAME,
+                "id": RULESET_ID
+            }]
 
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
         headers = {

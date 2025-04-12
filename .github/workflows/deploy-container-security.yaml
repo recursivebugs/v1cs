@@ -36,8 +36,8 @@ env:
   RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
   POLICY_NAME: ${{ github.event.inputs.policy_name }}
   POLICY_ID: ""
-  POLICY_FILE: "trendmicro/policy.yaml"
-  RULESET_FILE: "trendmicro/runtimeruleset.yaml"
+  POLICY_FILE: "trendmicro/policy.json"
+  RULESET_FILE: "trendmicro/runtimeruleset.json"
 
 jobs:
   manage-security-policies:

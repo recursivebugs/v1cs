@@ -6,6 +6,25 @@ import os
 import sys
 import traceback
 
+
+def load_policy_file(policy_file_path):
+    try:
+        with open(policy_file_path, 'r') as file:
+            if policy_file_path.endswith(('.yaml', '.yml')):
+                print("Detected YAML format")
+                return yaml.safe_load(file)
+            elif policy_file_path.endswith('.json'):
+                print("Detected JSON format")
+                return json.load(file)
+            else:
+                print("Unsupported policy file format. Please use .yaml, .yml, or .json")
+                sys.exit(1)
+    except Exception as e:
+        print(f"Error reading policy file: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
+
 def create_policy():
     try:
         API_KEY = os.environ.get('API_KEY')
@@ -19,25 +38,11 @@ def create_policy():
         print(f"Reading policy file: {POLICY_FILE}")
         print(f"Using ruleset ID: {RULESET_ID}")
 
-        try:
-            with open(POLICY_FILE, 'r') as file:
-                if POLICY_FILE.endswith(('.yaml', '.yml')):
-                    policy_data = yaml.safe_load(file)
-                    print("Loaded YAML policy file")
-                elif POLICY_FILE.endswith('.json'):
-                    policy_data = json.load(file)
-                    print("Loaded JSON policy file")
-                else:
-                    print("Unsupported file format. Please use .yaml, .yml, or .json")
-                    sys.exit(1)
-
-        except FileNotFoundError:
+        if not os.path.isfile(POLICY_FILE):
             print(f"Error: Policy file not found at {POLICY_FILE}")
             sys.exit(1)
-        except Exception as e:
-            print(f"Error reading policy file: {str(e)}")
-            traceback.print_exc()
-            sys.exit(1)
+
+        policy_data = load_policy_file(POLICY_FILE)
 
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
         headers = {
@@ -64,6 +69,7 @@ def create_policy():
         print(f"Unexpected error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     create_policy()

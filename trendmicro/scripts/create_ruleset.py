@@ -46,8 +46,7 @@ def create_ruleset():
         rules = []
 
         if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
-            rules_data = ruleset_data['rules']
-            for rule in rules_data:
+            for rule in ruleset_data['rules']:
                 rule_obj = {
                     "id": rule.get('id', rule.get('type', '')),
                     "action": rule.get('action', 'log')
@@ -81,8 +80,6 @@ def create_ruleset():
         print("Sending request to API...")
         print(f"API URL: {url}")
         print(f"API Headers: {json.dumps(headers, indent=2)}")
-        print(f"API Payload:")
-        print(json.dumps(api_data, indent=2))
 
         response = requests.post(url, headers=headers, json=api_data)
 
@@ -90,7 +87,7 @@ def create_ruleset():
         print(f"API Response Body: {response.text}")
 
         if response.status_code in [200, 201]:
-            if response.text.strip():  # response has content
+            if response.text.strip():
                 try:
                     result = response.json()
                     ruleset_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')

@@ -1,29 +1,8 @@
 #!/usr/bin/env python3
 import requests
-import json
-import yaml
 import os
 import sys
 import traceback
-
-
-def load_policy_file(policy_file_path):
-    try:
-        with open(policy_file_path, 'r') as file:
-            if policy_file_path.endswith(('.yaml', '.yml')):
-                print("Detected YAML format")
-                return yaml.safe_load(file)
-            elif policy_file_path.endswith('.json'):
-                print("Detected JSON format")
-                return json.load(file)
-            else:
-                print("Unsupported policy file format. Please use .yaml, .yml, or .json")
-                sys.exit(1)
-    except Exception as e:
-        print(f"Error reading policy file: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
-
 
 def create_policy():
     try:
@@ -36,22 +15,23 @@ def create_policy():
             sys.exit(1)
 
         if RULESET_ID == "CREATED_BUT_ID_UNKNOWN":
-            print("ERROR: RULESET_ID is invalid or not found. Cannot create policy without a valid RULESET_ID.")
+            print("Error: RULESET_ID is invalid or not found. Cannot create policy without a valid ruleset ID.")
             sys.exit(1)
 
         print(f"Reading policy file: {POLICY_FILE}")
-        print(f"Using RULESET_ID: {RULESET_ID}")
+        print(f"Using ruleset ID: {RULESET_ID}")
 
         if not os.path.isfile(POLICY_FILE):
             print(f"Error: Policy file not found at {POLICY_FILE}")
             sys.exit(1)
 
-        policy_data = load_policy_file(POLICY_FILE)
+        # Load policy.json as raw string
+        with open(POLICY_FILE, 'r') as f:
+            payload = f.read()
 
-        # Always enforce correct rulesetid format for API
-        if "runtime" in policy_data and "rulesetids" in policy_data["runtime"]:
-            print("Cleaning runtime.rulesetids to contain only the RULESET_ID...")
-            policy_data["runtime"]["rulesetids"] = [RULESET_ID]
+        print("===== Raw Payload being sent to API =====")
+        print(payload)
+        print("========================================")
 
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
         headers = {
@@ -62,11 +42,10 @@ def create_policy():
 
         print("Sending request to API...")
         print(f"API URL: {url}")
-        print(f"API Headers: {json.dumps(headers, indent=2)}")
-        print(f"API Payload:")
-        print(json.dumps(policy_data, indent=2))
+        print("Headers:")
+        print(headers)
 
-        response = requests.post(url, headers=headers, json=policy_data)
+        response = requests.post(url, headers=headers, data=payload)
 
         print(f"API Response Status: {response.status_code}")
         print(f"API Response Body: {response.text}")
@@ -92,7 +71,6 @@ def create_policy():
         print(f"Unexpected error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     create_policy()

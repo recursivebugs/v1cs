@@ -90,10 +90,18 @@ def create_ruleset():
         print(f"API Response Body: {response.text}")
 
         if response.status_code in [200, 201]:
-            result = response.json()
-            ruleset_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
+            if response.text.strip():  # response has content
+                try:
+                    result = response.json()
+                    ruleset_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
+                except Exception:
+                    ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
+            else:
+                ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
+
             print(f"Ruleset created successfully with ID: {ruleset_id}")
             print(f"ruleset_id={ruleset_id}")
+
         else:
             print(f"Error creating ruleset: HTTP {response.status_code}")
             sys.exit(1)

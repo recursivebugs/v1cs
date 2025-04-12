@@ -29,13 +29,12 @@ on:
         type: string
 
 env:
-  CLUSTER_NAME: ${{ github.event.inputs.cluster_name || vars.EKS_CLUSTER_NAME }}
-  AWS_REGION: ${{ github.event.inputs.region || vars.AWS_REGION }}
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  AWS_REGION: ${{ github.event.inputs.region }}
   API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
   GROUP_ID: ${{ github.event.inputs.group_id }}
   RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
   POLICY_NAME: ${{ github.event.inputs.policy_name }}
-  POLICY_ID: ""
   POLICY_FILE: "trendmicro/policy.json"
   RULESET_FILE: "trendmicro/runtimeruleset.json"
 
@@ -43,7 +42,8 @@ jobs:
   manage-security-policies:
     runs-on: ubuntu-latest
     outputs:
-      policy_id: ${{ steps.update-policy-id.outputs.policy_id }}
+      policy_id: ${{ steps.set-policy-id.outputs.policy_id }}
+      ruleset_id: ${{ steps.set-ruleset-id.outputs.ruleset_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -53,75 +53,60 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pyyaml
 
-      - name: Debug repository structure
-        run: |
-          echo "Repository contents:"
-          ls -la
-          echo "Trendmicro directory contents:"
-          ls -la trendmicro/
-          echo "Scripts directory contents:"
-          ls -la trendmicro/scripts/
-
       - name: Check if ruleset exists
         id: check-ruleset
         run: |
-          export API_KEY=${{ env.API_KEY }}
-          export RULESET_NAME=${{ env.RULESET_NAME }}
           output=$(python trendmicro/scripts/check_ruleset.py)
           echo "$output"
           if echo "$output" | grep -q "exists=true"; then
-            echo "Ruleset with the same name already exists. Please use another RULESET_NAME."
-            exit 2
+            ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
+            echo "Ruleset already exists with ID: $ruleset_id"
+            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+            exit 1
           fi
 
       - name: Create ruleset
         id: create-ruleset
         run: |
-          export API_KEY=${{ env.API_KEY }}
-          export RULESET_FILE=${{ env.RULESET_FILE }}
-          export RULESET_NAME="${{ env.RULESET_NAME }}"
-          python -u trendmicro/scripts/create_ruleset.py
-
-      - name: Set RULESET_ID
-        id: set-ruleset-id
-        run: |
+          python trendmicro/scripts/create_ruleset.py
           output=$(python trendmicro/scripts/check_ruleset.py)
           ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
           if [ -z "$ruleset_id" ]; then
             echo "ERROR: Unable to fetch RULESET_ID"
             exit 1
           fi
-          echo "RULESET_ID=$ruleset_id" >> $GITHUB_ENV
           echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+
+      - name: Set ruleset ID
+        id: set-ruleset-id
+        run: |
+          echo "ruleset_id=${{ steps.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_OUTPUT
 
       - name: Check if policy exists
         id: check-policy
         run: |
-          export API_KEY=${{ env.API_KEY }}
-          export POLICY_NAME=${{ env.POLICY_NAME }}
           output=$(python trendmicro/scripts/check_policy.py)
           echo "$output"
           if echo "$output" | grep -q "exists=true"; then
-            echo "Policy with the same name already exists. Please use another POLICY_NAME."
-            exit 2
+            policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+            echo "Policy already exists with ID: $policy_id"
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+            exit 1
           fi
 
       - name: Create policy
         id: create-policy
         run: |
-          export API_KEY=${{ env.API_KEY }}
-          export POLICY_FILE=${{ env.POLICY_FILE }}
-          export RULESET_ID=${{ env.RULESET_ID }}
-          python -u trendmicro/scripts/create_policy.py
-
-      - name: Update Policy ID
-        id: update-policy-id
-        run: |
+          python trendmicro/scripts/create_policy.py
           output=$(python trendmicro/scripts/check_policy.py)
           policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
           if [ -z "$policy_id" ]; then
             echo "ERROR: Unable to fetch POLICY_ID"
             exit 1
           fi
-          echo "POLICY_ID=$policy_id" >> $GITHUB_ENV
           echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+
+      - name: Set policy ID
+        id: set-policy-id
+        run: |
+          echo "policy_id=${{ steps.create-policy.outputs.policy_id }}" >> $GITHUB_OUTPUT

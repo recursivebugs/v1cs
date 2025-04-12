@@ -6,133 +6,99 @@ import os
 import sys
 import traceback
 
+
+def load_ruleset_file(ruleset_file_path):
+    try:
+        with open(ruleset_file_path, 'r') as file:
+            if ruleset_file_path.endswith(('.yaml', '.yml')):
+                print("Detected YAML format")
+                return yaml.safe_load(file)
+            elif ruleset_file_path.endswith('.json'):
+                print("Detected JSON format")
+                return json.load(file)
+            else:
+                print("Unsupported ruleset file format. Please use .yaml, .yml, or .json")
+                sys.exit(1)
+    except Exception as e:
+        print(f"Error reading ruleset file: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
+
 def create_ruleset():
     try:
-        # Get environment variables
         API_KEY = os.environ.get('API_KEY')
         RULESET_FILE = os.environ.get('RULESET_FILE')
         RULESET_NAME = os.environ.get('RULESET_NAME', 'Default Ruleset')
-        
-        if not API_KEY:
-            print("Error: API_KEY environment variable is not set")
+
+        if not API_KEY or not RULESET_FILE:
+            print("Missing required environment variables: API_KEY, RULESET_FILE")
             sys.exit(1)
-            
-        if not RULESET_FILE:
-            print("Error: RULESET_FILE environment variable is not set")
-            sys.exit(1)
-            
+
         print(f"Reading ruleset file: {RULESET_FILE}")
-        
-        try:
-            with open(RULESET_FILE, 'r') as file:
-                content = file.read()
-                print(f"File content length: {len(content)} characters")
-                
-                # Try to parse as YAML
-                try:
-                    ruleset_data = yaml.safe_load(content)
-                    print("Successfully parsed YAML file")
-                except Exception as yaml_error:
-                    print(f"Error parsing YAML: {str(yaml_error)}")
-                    sys.exit(1)
-                
-                # Process the rules from the flat YAML format
-                rules = []
-                
-                # Check if this is a simple list of rules
-                if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
-                    rules_data = ruleset_data['rules']
-                    for rule in rules_data:
-                        rule_obj = {
-                            "id": rule.get('type', ''),  # Using 'type' as the rule ID
-                            "action": rule.get('action', 'log')  # Defaulting to 'log'
-                        }
-                        
-                        # Add any additional properties
-                        if 'properties' in rule:
-                            rule_obj['properties'] = rule['properties']
-                            
-                        # Add namespaces if present
-                        if 'namespaces' in rule:
-                            rule_obj['namespaces'] = rule['namespaces']
-                        
-                        rules.append(rule_obj)
-                # Check for Kubernetes format
-                elif isinstance(ruleset_data, dict) and 'apiVersion' in ruleset_data and 'kind' in ruleset_data:
-                    if 'spec' in ruleset_data and 'definition' in ruleset_data['spec'] and 'rules' in ruleset_data['spec']['definition']:
-                        rules_data = ruleset_data['spec']['definition']['rules']
-                        for rule in rules_data:
-                            if 'ruleID' in rule:
-                                rule_obj = {
-                                    "id": rule.get('ruleID'),
-                                    "action": rule.get('mitigation', rule.get('action', 'log'))  # Try mitigation first, then action, default to log
-                                }
-                                rules.append(rule_obj)
-                
-                # Create the API payload
-                api_data = {
-                    "name": RULESET_NAME,
-                    "description": f"Created from {RULESET_FILE}",
-                    "rules": rules
-                }
-                
-                print(f"Prepared API request payload with {len(rules)} rules:")
-                print(json.dumps(api_data, indent=2))
-                
-        except FileNotFoundError:
+
+        if not os.path.isfile(RULESET_FILE):
             print(f"Error: File not found at {RULESET_FILE}")
             sys.exit(1)
-        except Exception as e:
-            print(f"Error reading or parsing file: {str(e)}")
-            traceback.print_exc()
+
+        ruleset_data = load_ruleset_file(RULESET_FILE)
+
+        rules = []
+
+        if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
+            rules_data = ruleset_data['rules']
+            for rule in rules_data:
+                rule_obj = {
+                    "id": rule.get('id', rule.get('type', '')),
+                    "action": rule.get('action', 'log')
+                }
+                if 'properties' in rule:
+                    rule_obj['properties'] = rule['properties']
+                if 'namespaces' in rule:
+                    rule_obj['namespaces'] = rule['namespaces']
+                rules.append(rule_obj)
+
+        else:
+            print("Unsupported ruleset file format — missing 'rules' key")
             sys.exit(1)
-            
-        # Make API request
-        print("Sending request to API...")
+
+        api_data = {
+            "name": RULESET_NAME,
+            "description": f"Created from {RULESET_FILE}",
+            "rules": rules
+        }
+
+        print(f"Prepared API request payload with {len(rules)} rules:")
+        print(json.dumps(api_data, indent=2))
+
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
-        
         headers = {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'api-version': 'v1',
             'Authorization': f'Bearer {API_KEY}'
         }
-        
-        try:
-            response = requests.post(url, headers=headers, json=api_data)
-            
-            print(f"API Response Status: {response.status_code}")
-            print(f"API Response Headers: {response.headers}")
-            print(f"API Response Body: {response.text}")
-            
-            if response.status_code in [200, 201]:
-                try:
-                    result = response.json()
-                    if isinstance(result, dict) and 'id' in result:
-                        print(f"Ruleset created successfully with ID: {result['id']}")
-                        print(f"ruleset_id={result['id']}")
-                        return
-                    else:
-                        print(f"API returned success but response format unexpected: {result}")
-                except Exception as e:
-                    print(f"API returned success but could not parse response: {str(e)}")
-                    
-                # Use placeholder ID if we can't parse the response
-                print("ruleset_id=CREATED_BUT_ID_UNKNOWN")
-            else:
-                print(f"Error creating ruleset: HTTP {response.status_code}")
-                print(f"Response: {response.text}")
-                sys.exit(1)
-                
-        except Exception as e:
-            print(f"Error making API request: {str(e)}")
-            traceback.print_exc()
+
+        print("Sending request to API...")
+        response = requests.post(url, headers=headers, json=api_data)
+
+        print(f"API Response Status: {response.status_code}")
+        print(f"API Response Body: {response.text}")
+
+        if response.status_code in [200, 201]:
+            result = response.json()
+            ruleset_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
+            print(f"Ruleset created successfully with ID: {ruleset_id}")
+            print(f"ruleset_id={ruleset_id}")
+        else:
+            print(f"Error creating ruleset: HTTP {response.status_code}")
             sys.exit(1)
-            
+
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     create_ruleset()

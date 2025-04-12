@@ -53,139 +53,75 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pyyaml
 
-      - name: Debug file structure
+      - name: Debug repository structure
         run: |
           echo "Repository contents:"
           ls -la
-          echo "Trendmicro directory:"
+          echo "Trendmicro directory contents:"
           ls -la trendmicro/
-          echo "Trendmicro scripts:"
+          echo "Scripts directory contents:"
           ls -la trendmicro/scripts/
 
       - name: Check if ruleset exists
         id: check-ruleset
         run: |
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_NAME=${{ env.RULESET_NAME }}
           output=$(python trendmicro/scripts/check_ruleset.py)
           echo "$output"
-        continue-on-error: true
-
-      - name: Fail if ruleset exists
-        if: steps.check-ruleset.outcome == 'success'
-        run: |
-          echo "Ruleset $RULESET_NAME already exists. Please use a different name and try again."
-          exit 1
+          if echo "$output" | grep -q "exists=true"; then
+            echo "Ruleset with the same name already exists. Please use another RULESET_NAME."
+            exit 2
+          fi
 
       - name: Create ruleset
         id: create-ruleset
         run: |
-          python trendmicro/scripts/create_ruleset.py
+          export API_KEY=${{ env.API_KEY }}
+          export RULESET_FILE=${{ env.RULESET_FILE }}
+          export RULESET_NAME="${{ env.RULESET_NAME }}"
+          python -u trendmicro/scripts/create_ruleset.py
+
+      - name: Set RULESET_ID
+        id: set-ruleset-id
+        run: |
           output=$(python trendmicro/scripts/check_ruleset.py)
           ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
-          echo "ruleset_id=$ruleset_id" >> $GITHUB_ENV
+          if [ -z "$ruleset_id" ]; then
+            echo "ERROR: Unable to fetch RULESET_ID"
+            exit 1
+          fi
+          echo "RULESET_ID=$ruleset_id" >> $GITHUB_ENV
           echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
 
       - name: Check if policy exists
         id: check-policy
         run: |
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_NAME=${{ env.POLICY_NAME }}
           output=$(python trendmicro/scripts/check_policy.py)
           echo "$output"
-        continue-on-error: true
-
-      - name: Fail if policy exists
-        if: steps.check-policy.outcome == 'success'
-        run: |
-          echo "Policy $POLICY_NAME already exists. Please use a different name and try again."
-          exit 1
+          if echo "$output" | grep -q "exists=true"; then
+            echo "Policy with the same name already exists. Please use another POLICY_NAME."
+            exit 2
+          fi
 
       - name: Create policy
         id: create-policy
         run: |
-          python trendmicro/scripts/create_policy.py
-          output=$(python trendmicro/scripts/check_policy.py)
-          policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
-          echo "policy_id=$policy_id" >> $GITHUB_ENV
-          echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          export API_KEY=${{ env.API_KEY }}
+          export POLICY_FILE=${{ env.POLICY_FILE }}
+          export RULESET_ID=${{ env.RULESET_ID }}
+          python -u trendmicro/scripts/create_policy.py
 
-      - name: Update Policy ID Output
+      - name: Update Policy ID
         id: update-policy-id
         run: |
-          echo "policy_id=${{ env.policy_id }}" >> $GITHUB_OUTPUT
-
-  deploy-container-security:
-    needs: manage-security-policies
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update kube config
-        run: |
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-          kubectl cluster-info
-          kubectl get nodes
-
-      - name: Setup Helm
-        run: |
-          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-          chmod 700 get_helm.sh
-          ./get_helm.sh
-
-      - name: Create Helm overrides file
-        run: |
-          cat <<EOF > overrides.yaml
-          cloudOne:
-            clusterRegistrationKey: true
-            groupId: $GROUP_ID
-            policyId: ${{ needs.manage-security-policies.outputs.policy_id }}
-            endpoint: https://container.us-1.cloudone.trendmicro.com
-            exclusion:
-              namespaces: [kube-system]
-            runtimeSecurity:
-              enabled: true
-            vulnerabilityScanning:
-              enabled: true
-            malwareScanning:
-              enabled: true
-            inventoryCollection:
-              enabled: true
-          EOF
-
-      - name: Create namespace and secret
-        run: |
-          kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl delete secret trendmicro-container-security-registration-key -n trendmicro-system --ignore-not-found
-          kubectl create secret generic trendmicro-container-security-registration-key -n trendmicro-system --from-literal=registration.key=$API_KEY
-
-      - name: Deploy with Helm
-        run: |
-          helm install trendmicro --namespace trendmicro-system --values overrides.yaml https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
-
-      - name: Verify deployment
-        run: |
-          kubectl get pods -n trendmicro-system
-          kubectl get services -n trendmicro-system
-
-      - name: Save Deployment Info
-        run: |
-          cat <<EOF > deployment-info.json
-          {
-            "clusterName": "$CLUSTER_NAME",
-            "region": "$AWS_REGION",
-            "policyId": "${{ needs.manage-security-policies.outputs.policy_id }}",
-            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          }
-          EOF
-
-      - name: Upload Deployment Info Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-info
-          path: deployment-info.json
-          retention-days: 90
+          output=$(python trendmicro/scripts/check_policy.py)
+          policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
+          if [ -z "$policy_id" ]; then
+            echo "ERROR: Unable to fetch POLICY_ID"
+            exit 1
+          fi
+          echo "POLICY_ID=$policy_id" >> $GITHUB_ENV
+          echo "policy_id=$policy_id" >> $GITHUB_OUTPUT

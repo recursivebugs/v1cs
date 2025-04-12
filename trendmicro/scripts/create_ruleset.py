@@ -88,14 +88,21 @@ def create_ruleset():
 
         if response.status_code in [200, 201]:
             ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
+
             if response.text.strip():
                 try:
                     result = response.json()
                     ruleset_id = result.get('id', ruleset_id)
                 except Exception:
                     pass
+            else:
+                location = response.headers.get('Location')
+                if location and location.split('/')[-1]:
+                    ruleset_id = location.split('/')[-1]
+
             print(f"Ruleset created successfully with ID: {ruleset_id}")
             print(f"ruleset_id={ruleset_id}")
+
         else:
             print(f"Failed to create ruleset: HTTP {response.status_code}")
             sys.exit(1)

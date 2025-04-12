@@ -68,11 +68,9 @@ jobs:
           export API_KEY=${{ env.API_KEY }}
           export RULESET_NAME=${{ env.RULESET_NAME }}
           
-          # Run the Python script and capture its output
           output=$(python trendmicro/scripts/check_ruleset.py)
           echo "$output"
-          
-          # Parse the output to set GitHub outputs
+
           if echo "$output" | grep -q "exists=true"; then
             echo "exists=true" >> $GITHUB_OUTPUT
             ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
@@ -88,20 +86,17 @@ jobs:
           export API_KEY=${{ env.API_KEY }}
           export RULESET_FILE=${{ env.RULESET_FILE }}
           export RULESET_NAME="${{ env.RULESET_NAME }}"
-          
-          # Check if file exists
+
           if [ ! -f "$RULESET_FILE" ]; then
             echo "Error: Ruleset file not found at $RULESET_FILE"
             ls -la trendmicro/
             exit 1
           fi
-          
-          # Run the script only once and capture both output and exit code
+
           python -u trendmicro/scripts/create_ruleset.py
           RESULT=$?
-          
+
           if [ $RESULT -eq 0 ]; then
-            # Run again just to capture the ruleset_id
             output=$(python -u trendmicro/scripts/create_ruleset.py | grep "ruleset_id=")
             ruleset_id=$(echo "$output" | sed 's/ruleset_id=//')
             
@@ -116,6 +111,13 @@ jobs:
         id: set-ruleset-id
         run: |
           RULESET_ID="${{ steps.check-ruleset.outputs.ruleset_id || steps.create-ruleset.outputs.ruleset_id }}"
+
+          if [ -z "$RULESET_ID" ] || [ "$RULESET_ID" == "CREATED_BUT_ID_UNKNOWN" ]; then
+            echo "ERROR: Missing valid RULESET_ID - exiting."
+            exit 1
+          fi
+
+          echo "RULESET_ID=$RULESET_ID"
           echo "RULESET_ID=$RULESET_ID" >> $GITHUB_ENV
           echo "ruleset_id=$RULESET_ID" >> $GITHUB_OUTPUT
 
@@ -125,11 +127,9 @@ jobs:
           export API_KEY=${{ env.API_KEY }}
           export POLICY_NAME=${{ env.POLICY_NAME }}
           
-          # Run the Python script and capture its output
           output=$(python trendmicro/scripts/check_policy.py)
           echo "$output"
-          
-          # Parse the output to set GitHub outputs
+
           if echo "$output" | grep -q "exists=true"; then
             echo "exists=true" >> $GITHUB_OUTPUT
             policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
@@ -142,27 +142,28 @@ jobs:
         id: create-policy
         if: steps.check-policy.outputs.exists != 'true'
         run: |
-          # Set environment variables for the script
           export API_KEY=${{ env.API_KEY }}
           export POLICY_FILE=${{ env.POLICY_FILE }}
           export RULESET_ID=${{ env.RULESET_ID }}
-          
-          # Check if file exists
+
+          if [ "$RULESET_ID" == "CREATED_BUT_ID_UNKNOWN" ]; then
+            echo "ERROR: RULESET_ID is invalid, cannot create policy."
+            exit 1
+          fi
+
           if [ ! -f "$POLICY_FILE" ]; then
             echo "Error: Policy file not found at $POLICY_FILE"
             ls -la trendmicro/
             exit 1
           fi
-          
-          # Run the script only once and capture both output and exit code
+
           python -u trendmicro/scripts/create_policy.py
           RESULT=$?
-          
+
           if [ $RESULT -eq 0 ]; then
-            # Run again just to capture the policy_id
             output=$(python -u trendmicro/scripts/create_policy.py | grep "policy_id=")
             policy_id=$(echo "$output" | sed 's/policy_id=//')
-            
+
             echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
             echo "Successfully created policy with ID: $policy_id"
           else
@@ -176,114 +177,3 @@ jobs:
           POLICY_ID="${{ steps.check-policy.outputs.policy_id || steps.create-policy.outputs.policy_id }}"
           echo "POLICY_ID=$POLICY_ID" >> $GITHUB_ENV
           echo "policy_id=$POLICY_ID" >> $GITHUB_OUTPUT
-
-  deploy-container-security:
-    needs: manage-security-policies
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Update kube config
-        run: |
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-          kubectl cluster-info
-          kubectl get nodes
-
-      - name: Setup Helm
-        run: |
-          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-          chmod 700 get_helm.sh
-          ./get_helm.sh
-          helm version
-
-      - name: Create overrides file
-        run: |
-          cat <<EOF > overrides.yaml
-          cloudOne:
-            clusterRegistrationKey: true
-            groupId: ${{ env.GROUP_ID }}
-            policyId: ${{ needs.manage-security-policies.outputs.policy_id }}
-            endpoint: https://container.us-1.cloudone.trendmicro.com
-            exclusion:
-              namespaces: [kube-system]
-            runtimeSecurity:
-              enabled: true
-            vulnerabilityScanning:
-              enabled: true
-            malwareScanning:
-              enabled: true
-            inventoryCollection:
-              enabled: true
-          EOF
-          
-          echo "Created overrides.yaml with the following content:"
-          cat overrides.yaml
-
-      - name: Create namespace and secret
-        run: |
-          kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Check if secret already exists and delete it if it does
-          if kubectl get secret trendmicro-container-security-registration-key -n trendmicro-system &> /dev/null; then
-            echo "Secret already exists, deleting it first..."
-            kubectl delete secret trendmicro-container-security-registration-key -n trendmicro-system
-          fi
-          
-          # Create the secret with the API key
-          kubectl create secret generic trendmicro-container-security-registration-key -n trendmicro-system --from-literal=registration.key=${{ env.API_KEY }}
-          
-          echo "Secret created successfully."
-
-      - name: Deploy with Helm
-        run: |
-          echo "Installing Trend Micro Container Security with Helm..."
-          
-          helm install \
-            trendmicro \
-            --namespace trendmicro-system \
-            --values overrides.yaml \
-            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
-          
-          echo "Helm installation completed."
-
-      - name: Verify deployment
-        run: |
-          echo "Waiting for pods to be ready..."
-          sleep 30
-          
-          echo "Checking Trend Micro Container Security deployment:"
-          kubectl get pods -n trendmicro-system
-          
-          echo "Checking Trend Micro Container Security services:"
-          kubectl get services -n trendmicro-system
-          
-          echo "Deployment verification complete."
-
-      - name: Save deployment info
-        run: |
-          cat <<EOF > deployment-info.json
-          {
-            "clusterName": "$CLUSTER_NAME",
-            "region": "$AWS_REGION",
-            "policyId": "${{ needs.manage-security-policies.outputs.policy_id }}",
-            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          }
-          EOF
-          
-          echo "Deployment information saved:"
-          cat deployment-info.json
-
-      - name: Upload deployment info
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-info
-          path: deployment-info.json
-          retention-days: 90

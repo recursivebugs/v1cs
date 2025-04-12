@@ -48,7 +48,7 @@ def create_ruleset():
         if isinstance(ruleset_data, dict) and 'rules' in ruleset_data:
             for rule in ruleset_data['rules']:
                 rule_obj = {
-                    "id": rule.get('id', rule.get('type', '')),
+                    "id": rule.get('id') or rule.get('type', ''),
                     "action": rule.get('action', 'log')
                 }
                 if 'properties' in rule:
@@ -60,14 +60,14 @@ def create_ruleset():
             print("Unsupported ruleset file format — missing 'rules' key")
             sys.exit(1)
 
-        api_data = {
+        payload = {
             "name": RULESET_NAME,
             "description": f"Created from {RULESET_FILE}",
             "rules": rules
         }
 
         print(f"Prepared API request payload with {len(rules)} rules:")
-        print(json.dumps(api_data, indent=2))
+        print(json.dumps(payload, indent=2))
 
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
         headers = {
@@ -79,28 +79,25 @@ def create_ruleset():
 
         print("Sending request to API...")
         print(f"API URL: {url}")
-        print(f"API Headers: {json.dumps(headers, indent=2)}")
+        print(f"Headers: {json.dumps(headers, indent=2)}")
 
-        response = requests.post(url, headers=headers, json=api_data)
+        response = requests.post(url, headers=headers, json=payload)
 
         print(f"API Response Status: {response.status_code}")
         print(f"API Response Body: {response.text}")
 
         if response.status_code in [200, 201]:
+            ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
             if response.text.strip():
                 try:
                     result = response.json()
-                    ruleset_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
+                    ruleset_id = result.get('id', ruleset_id)
                 except Exception:
-                    ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
-            else:
-                ruleset_id = 'CREATED_BUT_ID_UNKNOWN'
-
+                    pass
             print(f"Ruleset created successfully with ID: {ruleset_id}")
             print(f"ruleset_id={ruleset_id}")
-
         else:
-            print(f"Error creating ruleset: HTTP {response.status_code}")
+            print(f"Failed to create ruleset: HTTP {response.status_code}")
             sys.exit(1)
 
     except Exception as e:

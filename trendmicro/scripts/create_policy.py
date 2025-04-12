@@ -35,6 +35,10 @@ def create_policy():
             print("Missing required environment variables: API_KEY, POLICY_FILE, RULESET_ID")
             sys.exit(1)
 
+        if RULESET_ID == "CREATED_BUT_ID_UNKNOWN":
+            print("Error: RULESET_ID is invalid or not found. Cannot create policy without a valid ruleset ID.")
+            sys.exit(1)
+
         print(f"Reading policy file: {POLICY_FILE}")
         print(f"Using ruleset ID: {RULESET_ID}")
 
@@ -52,15 +56,29 @@ def create_policy():
         }
 
         print("Sending request to API...")
+        print(f"API URL: {url}")
+        print(f"API Headers: {json.dumps(headers, indent=2)}")
+        print(f"API Payload:")
+        print(json.dumps(policy_data, indent=2))
+
         response = requests.post(url, headers=headers, json=policy_data)
 
         print(f"API Response Status: {response.status_code}")
         print(f"API Response Body: {response.text}")
 
         if response.status_code in [200, 201]:
-            result = response.json()
-            print(f"Policy created successfully with ID: {result.get('id', 'UNKNOWN')}")
-            print(f"policy_id={result.get('id', 'CREATED_BUT_ID_UNKNOWN')}")
+            if response.text.strip():
+                try:
+                    result = response.json()
+                    policy_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
+                except Exception:
+                    policy_id = 'CREATED_BUT_ID_UNKNOWN'
+            else:
+                policy_id = 'CREATED_BUT_ID_UNKNOWN'
+
+            print(f"Policy created successfully with ID: {policy_id}")
+            print(f"policy_id={policy_id}")
+
         else:
             print(f"Failed to create policy: HTTP {response.status_code}")
             sys.exit(1)

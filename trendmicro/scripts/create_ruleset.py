@@ -57,7 +57,6 @@ def create_ruleset():
                 if 'namespaces' in rule:
                     rule_obj['namespaces'] = rule['namespaces']
                 rules.append(rule_obj)
-
         else:
             print("Unsupported ruleset file format — missing 'rules' key")
             sys.exit(1)
@@ -80,6 +79,11 @@ def create_ruleset():
         }
 
         print("Sending request to API...")
+        print(f"API URL: {url}")
+        print(f"API Headers: {json.dumps(headers, indent=2)}")
+        print(f"API Payload:")
+        print(json.dumps(api_data, indent=2))
+
         response = requests.post(url, headers=headers, json=api_data)
 
         print(f"API Response Status: {response.status_code}")

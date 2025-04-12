@@ -1,38 +1,18 @@
 #!/usr/bin/env python3
 import requests
 import json
-import yaml
 import os
 import sys
 import traceback
-
-
-def load_ruleset_file(ruleset_file_path):
-    try:
-        with open(ruleset_file_path, 'r') as file:
-            if ruleset_file_path.endswith(('.yaml', '.yml')):
-                print("Detected YAML format")
-                return yaml.safe_load(file)
-            elif ruleset_file_path.endswith('.json'):
-                print("Detected JSON format")
-                return json.load(file)
-            else:
-                print("Unsupported ruleset file format. Please use .yaml, .yml, or .json")
-                sys.exit(1)
-    except Exception as e:
-        print(f"Error reading ruleset file: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
 
 
 def check_ruleset():
     try:
         API_KEY = os.environ.get('API_KEY')
         RULESET_NAME = os.environ.get('RULESET_NAME')
-        RULESET_FILE = os.environ.get('RULESET_FILE')
 
-        if not API_KEY or not RULESET_NAME or not RULESET_FILE:
-            print("Missing required environment variables: API_KEY, RULESET_NAME, RULESET_FILE")
+        if not API_KEY or not RULESET_NAME:
+            print("Missing required environment variables: API_KEY, RULESET_NAME")
             sys.exit(1)
 
         print(f"Checking for existing ruleset: {RULESET_NAME}")
@@ -50,7 +30,8 @@ def check_ruleset():
 
         if response.status_code == 200:
             result = response.json()
-            if result.get("totalCount", 0) > 0:
+
+            if result.get("totalCount", 0) > 0 and "rulesets" in result:
                 ruleset_id = result["rulesets"][0]["id"]
                 print(f"exists=true")
                 print(f"ruleset_id={ruleset_id}")

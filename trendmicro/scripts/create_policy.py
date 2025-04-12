@@ -36,17 +36,22 @@ def create_policy():
             sys.exit(1)
 
         if RULESET_ID == "CREATED_BUT_ID_UNKNOWN":
-            print("Error: RULESET_ID is invalid or not found. Cannot create policy without a valid ruleset ID.")
+            print("ERROR: RULESET_ID is invalid or not found. Cannot create policy without a valid RULESET_ID.")
             sys.exit(1)
 
         print(f"Reading policy file: {POLICY_FILE}")
-        print(f"Using ruleset ID: {RULESET_ID}")
+        print(f"Using RULESET_ID: {RULESET_ID}")
 
         if not os.path.isfile(POLICY_FILE):
             print(f"Error: Policy file not found at {POLICY_FILE}")
             sys.exit(1)
 
         policy_data = load_policy_file(POLICY_FILE)
+
+        # Always enforce correct rulesetid format for API
+        if "runtime" in policy_data and "rulesetids" in policy_data["runtime"]:
+            print("Cleaning runtime.rulesetids to contain only the RULESET_ID...")
+            policy_data["runtime"]["rulesetids"] = [RULESET_ID]
 
         url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
         headers = {

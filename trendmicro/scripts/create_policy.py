@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import requests
 import json
+import yaml
 import os
 import sys
 import traceback
@@ -9,11 +10,15 @@ def create_policy():
     try:
         # Get environment variables
         API_KEY = os.environ.get('API_KEY')
-        POLICY_FILE = "trendmicro/policy.json"  # Hardcode to use the JSON file instead
+        POLICY_FILE = os.environ.get('POLICY_FILE')
         RULESET_ID = os.environ.get('RULESET_ID')
         
         if not API_KEY:
             print("Error: API_KEY environment variable is not set")
+            sys.exit(1)
+            
+        if not POLICY_FILE:
+            print("Error: POLICY_FILE environment variable is not set")
             sys.exit(1)
             
         if not RULESET_ID:
@@ -24,31 +29,22 @@ def create_policy():
         print(f"Using ruleset ID: {RULESET_ID}")
         
         try:
-            # Read the JSON file
+            # Read the file directly
             with open(POLICY_FILE, 'r') as file:
-                try:
-                    policy_data = json.load(file)
-                    print("Successfully loaded JSON policy file")
-                    
-                    # Update the ruleset ID in the policy
-                    if "runtime" in policy_data and "rulesetids" in policy_data["runtime"] and len(policy_data["runtime"]["rulesetids"]) > 0:
-                        print("Updating ruleset ID in policy...")
-                        policy_data["runtime"]["rulesetids"][0]["id"] = RULESET_ID
-                    
-                    # Convert back to JSON with proper formatting
-                    policy_json = json.dumps(policy_data)
-                    print(f"Prepared policy payload (first 500 chars):")
-                    print(policy_json[:500])
-                    
-                except json.JSONDecodeError as e:
-                    print(f"Error: Invalid JSON in policy file: {str(e)}")
-                    sys.exit(1)
+                policy_yaml = file.read()
+                
+                # Parse it to make sure it's valid YAML
+                policy_data = yaml.safe_load(policy_yaml)
+                print(f"Successfully read policy file ({len(policy_yaml)} bytes)")
+                
+                # Send the policy data as-is to the API
+                print("Sending policy data to API without format conversion")
                 
         except FileNotFoundError:
             print(f"Error: Policy file not found at {POLICY_FILE}")
             sys.exit(1)
         except Exception as e:
-            print(f"Error reading policy file: {str(e)}")
+            print(f"Error reading file: {str(e)}")
             traceback.print_exc()
             sys.exit(1)
             
@@ -63,7 +59,8 @@ def create_policy():
         }
         
         try:
-            response = requests.post(url, headers=headers, data=policy_json)
+            # Send the policy data as-is
+            response = requests.post(url, headers=headers, json=policy_data)
             
             print(f"API Response Status: {response.status_code}")
             print(f"API Response Headers: {response.headers}")
@@ -81,7 +78,6 @@ def create_policy():
                 except Exception as e:
                     print(f"API returned success but could not parse response: {str(e)}")
                     
-                # Use placeholder ID if we can't parse the response
                 print("policy_id=CREATED_BUT_ID_UNKNOWN")
             else:
                 print(f"Error creating policy: HTTP {response.status_code}")

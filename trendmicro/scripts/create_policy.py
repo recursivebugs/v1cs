@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import requests
+import json
 import os
 import sys
 import traceback
+
 
 def create_policy():
     try:
@@ -26,21 +28,20 @@ def create_policy():
             sys.exit(1)
 
         with open(POLICY_FILE, 'r') as f:
-            payload = f.read()
+            raw_payload = f.read()
 
-        print("======== Raw Payload (before modification) ========")
-        print(payload)
-        print("===================================================")
+        print("======== Raw Policy Payload ========")
+        print(raw_payload)
+        print("====================================")
 
-        # Optional: fix payload if rulesetids is list of objects
-        if '"rulesetids": [{' in payload:
-            print("Detected rulesetids as objects — fixing to list of strings...")
-            import json
-            data = json.loads(payload)
-            # Flatten rulesetids
-            if 'runtime' in data and 'rulesetids' in data['runtime']:
-                data['runtime']['rulesetids'] = [RULESET_ID]
-            payload = json.dumps(data, indent=2)
+        data = json.loads(raw_payload)
+
+        # Auto-fix rulesetids format
+        if 'runtime' in data and 'rulesetids' in data['runtime']:
+            print("Fixing rulesetids format to [RULESET_ID]...")
+            data['runtime']['rulesetids'] = [RULESET_ID]
+
+        payload = json.dumps(data, indent=2)
 
         print("======== Final Payload to API ========")
         print(payload)
@@ -81,6 +82,7 @@ def create_policy():
         print(f"Unexpected error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     create_policy()

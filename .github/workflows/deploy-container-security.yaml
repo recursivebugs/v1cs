@@ -43,7 +43,7 @@ jobs:
   manage-security-policies:
     runs-on: ubuntu-latest
     outputs:
-      policy_id: ${{ steps.update-policy-id.outputs.policy_id }}
+      policy_id: ${{ steps.create-policy.outputs.policy_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -99,7 +99,26 @@ jobs:
           echo "POLICY_ID=$policy_id" >> $GITHUB_ENV
           echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
 
-      - name: Update Policy ID
-        id: update-policy-id
+  deploy-container-security:
+    needs: manage-security-policies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kube config
         run: |
-          echo "policy_id=${{ steps.create-policy.outputs.policy_id }}" >> $GITHUB_OUTPUT
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+
+      - name: Deploy with Helm
+        run: |
+          helm install trendmicro --namespace trendmicro-system \
+            --values overrides.yaml \
+            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz

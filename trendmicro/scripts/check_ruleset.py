@@ -43,7 +43,9 @@ def check_ruleset():
             sys.exit(0)
         else:
             print("exists=false")
-            sys.exit(2)
+            # Changed from exit code 2 to 0 to prevent GitHub Actions from treating this as an error
+            # This is a normal condition when we want to create a new ruleset
+            sys.exit(0)
 
     except Exception as e:
         print(f"Unexpected error: {str(e)}")

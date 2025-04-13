@@ -7,17 +7,29 @@ on:
         description: 'Customer Name'
         required: true
         default: 'DemoCluster001'
+      ruleset_name:
+        description: 'Ruleset Name'
+        required: true
+        default: 'DemoLogOnlyRuleset'  # Matches the name in runtimeruleset.json
+      policy_name:
+        description: 'Policy Name'
+        required: true
+        default: 'DemoLogOnlyPolicy'  # Matches the name in policy.json
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-west-2'
 
 jobs:
   manage-security-policies:
     runs-on: ubuntu-latest
     env:
       CLUSTER_NAME: ${{ github.event.inputs.customer_name }}
-      AWS_REGION: us-west-2
+      AWS_REGION: ${{ github.event.inputs.aws_region }}
       API_KEY: ${{ secrets.TRENDMICRO_API_KEY }}
       GROUP_ID: '00000000-0000-0000-0000-000000000001'
-      RULESET_NAME: 'DemoLogOnlyRuleset'  # Changed to match the name in the JSON file
-      POLICY_NAME: 'DemoLogOnlyPolicy'    # Changed to match the name in the JSON file
+      RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
+      POLICY_NAME: ${{ github.event.inputs.policy_name }}
       POLICY_FILE: trendmicro/policy.json
       RULESET_FILE: trendmicro/runtimeruleset.json
 

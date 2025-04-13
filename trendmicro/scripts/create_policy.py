@@ -20,6 +20,9 @@ def create_policy():
 
     if not api_key or not policy_file or not ruleset_id:
         print("Missing required environment variables.")
+        print(f"API_KEY: {'SET' if api_key else 'MISSING'}")
+        print(f"POLICY_FILE: {policy_file or 'MISSING'}")
+        print(f"RULESET_ID: {ruleset_id or 'MISSING'}")
         sys.exit(1)
 
     if ruleset_id == "CREATED_BUT_ID_UNKNOWN":
@@ -31,10 +34,18 @@ def create_policy():
         sys.exit(1)
 
     policy_data = load_policy_file(policy_file)
+    
+    # Ensure we're working with a deep copy to avoid modifying the original
+    policy_data = json.loads(json.dumps(policy_data))
 
-    # Ensure ruleset ID format is correct
-    if isinstance(policy_data.get("runtime", {}).get("rulesetids", []), list):
-        policy_data["runtime"]["rulesetids"] = [ruleset_id]
+    # Update the ruleset ID
+    if "runtime" not in policy_data:
+        policy_data["runtime"] = {}
+    
+    policy_data["runtime"]["rulesetids"] = [ruleset_id]
+    
+    # Print the policy data for debugging
+    print(f"Policy data to be sent: {json.dumps(policy_data, indent=2)}")
 
     url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
     headers = {

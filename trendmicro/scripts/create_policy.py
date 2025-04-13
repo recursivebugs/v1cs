@@ -17,6 +17,7 @@ def create_policy():
     api_key = os.getenv('API_KEY')
     policy_file = os.getenv('POLICY_FILE')
     ruleset_id = os.getenv('RULESET_ID')
+    policy_name = os.getenv('POLICY_NAME')
 
     if not api_key or not policy_file or not ruleset_id:
         print("Missing required environment variables.")
@@ -35,17 +36,27 @@ def create_policy():
 
     policy_data = load_policy_file(policy_file)
     
-    # Ensure we're working with a deep copy to avoid modifying the original
-    policy_data = json.loads(json.dumps(policy_data))
-
-    # Update the ruleset ID
-    if "runtime" not in policy_data:
-        policy_data["runtime"] = {}
-    
-    policy_data["runtime"]["rulesetids"] = [ruleset_id]
+    # Create a simplified policy structure
+    simplified_policy = {
+        "name": policy_name or policy_data.get("name", ""),
+        "description": policy_data.get("description", ""),
+        "default": policy_data.get("default", {}),
+        "runtime": {
+            "rulesetids": [ruleset_id]
+        },
+        "xdrEnabled": policy_data.get("xdrEnabled", True),
+        "type": policy_data.get("type", "userManaged"),
+        "malwareScan": {
+            "mitigation": policy_data.get("malwareScan", {}).get("mitigation", "log"),
+            "schedule": {
+                "enabled": True,
+                "cron": "59 3 * * 6"  # Fixed cron expression
+            }
+        }
+    }
     
     # Print the policy data for debugging
-    print(f"Policy data to be sent: {json.dumps(policy_data, indent=2)}")
+    print(f"Policy data to be sent: {json.dumps(simplified_policy, indent=2)}")
 
     url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
     headers = {
@@ -55,7 +66,7 @@ def create_policy():
     }
 
     print(f"Sending request to create policy: {policy_file}")
-    response = requests.post(url, headers=headers, json=policy_data)
+    response = requests.post(url, headers=headers, json=simplified_policy)
 
     print(f"API Response Status: {response.status_code}")
     print(f"API Response Body: {response.text}")

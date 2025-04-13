@@ -54,17 +54,19 @@ jobs:
           pip install requests pyyaml
 
       - name: Check if ruleset exists
+        id: check-ruleset
         run: |
           output=$(python trendmicro/scripts/check_ruleset.py)
           echo "$output"
           if echo "$output" | grep -q "exists=true"; then
-            echo "Ruleset '${{ env.RULESET_NAME}}' already exists. Please use a different name and try again."
+            echo "Ruleset '${{ env.RULESET_NAME }}' already exists. Please use a different name and try again."
             exit 0
           fi
 
       - name: Create ruleset
+        id: create-ruleset
         run: |
-          python trendmicro/scripts/create_ruleset.py
+          python -u trendmicro/scripts/create_ruleset.py
           output=$(python trendmicro/scripts/check_ruleset.py)
           ruleset_id=$(echo "$output" | grep "ruleset_id=" | cut -d'=' -f2)
           if [ -z "$ruleset_id" ]; then
@@ -72,8 +74,10 @@ jobs:
             exit 1
           fi
           echo "RULESET_ID=$ruleset_id" >> $GITHUB_ENV
+          echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
 
       - name: Check if policy exists
+        id: check-policy
         run: |
           output=$(python trendmicro/scripts/check_policy.py)
           echo "$output"
@@ -85,13 +89,14 @@ jobs:
       - name: Create policy
         id: create-policy
         run: |
-          python trendmicro/scripts/create_policy.py
+          python -u trendmicro/scripts/create_policy.py
           output=$(python trendmicro/scripts/check_policy.py)
           policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
           if [ -z "$policy_id" ]; then
             echo "ERROR: Unable to fetch POLICY_ID"
             exit 1
           fi
+          echo "POLICY_ID=$policy_id" >> $GITHUB_ENV
           echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
 
   deploy-container-security:

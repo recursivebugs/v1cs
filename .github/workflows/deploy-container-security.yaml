@@ -53,7 +53,25 @@ jobs:
 
       - name: Manage Security Policies
         run: |
+          # Enable shell debugging
+          set -x
+          
+          # Check if API_KEY is set
+          if [ -z "$API_KEY" ]; then
+            echo "ERROR: API_KEY environment variable is not set or empty"
+            exit 1
+          fi
+          
+          # Verify Python scripts exist
+          if [ ! -f "trendmicro/scripts/check_ruleset.py" ]; then
+            echo "ERROR: check_ruleset.py not found"
+            ls -la trendmicro/scripts/
+            exit 1
+          fi
+          
           # Check if ruleset exists
+          echo "Running check_ruleset.py..."
+          python trendmicro/scripts/check_ruleset.py || { echo "check_ruleset.py failed with exit code $?"; exit 1; }
           output=$(python trendmicro/scripts/check_ruleset.py)
           echo "$output"
           
@@ -66,6 +84,8 @@ jobs:
             echo "Ruleset '${RULESET_NAME}' doesn't exist. Creating new ruleset..."
             
             # Create ruleset
+            echo "Running create_ruleset.py..."
+            python trendmicro/scripts/create_ruleset.py || { echo "create_ruleset.py failed with exit code $?"; exit 1; }
             output=$(python trendmicro/scripts/create_ruleset.py)
             echo "$output"
             
@@ -76,6 +96,8 @@ jobs:
           fi
           
           # Check if policy exists
+          echo "Running check_policy.py..."
+          python trendmicro/scripts/check_policy.py || { echo "check_policy.py failed with exit code $?"; exit 1; }
           output=$(python trendmicro/scripts/check_policy.py)
           echo "$output"
           
@@ -91,6 +113,8 @@ jobs:
             export RULESET_ID="${ruleset_id}"
             
             # Create policy
+            echo "Running create_policy.py..."
+            python trendmicro/scripts/create_policy.py || { echo "create_policy.py failed with exit code $?"; exit 1; }
             output=$(python trendmicro/scripts/create_policy.py)
             echo "$output"
             

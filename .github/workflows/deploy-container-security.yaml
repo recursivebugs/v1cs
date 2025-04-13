@@ -3,86 +3,43 @@ name: Deploy Container Security with Policy Management
 on:
   workflow_dispatch:
     inputs:
-      cluster_name:
-        description: 'EKS Cluster Name'
+      customer_name:
+        description: 'Customer Name'
         required: true
         default: 'DemoCluster001'
-        type: string
-      region:
-        description: 'AWS Region'
-        required: true
-        default: 'us-west-2'
-        type: string
-      group_id:
-        description: 'Group ID'
-        required: false
-        default: '00000000-0000-0000-0000-000000000001'
-        type: string
-      ruleset_name:
-        description: 'Ruleset Name'
-        required: true
-        default: 'DemoRuleSetLogOnly'
-        type: string
-      policy_name:
-        description: 'Policy Name'
-        required: true
-        default: 'DemoPolicyLogOnly'
-        type: string
-
-env:
-  CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
-  AWS_REGION: ${{ github.event.inputs.region }}
-  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-  GROUP_ID: ${{ github.event.inputs.group_id }}
-  RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
-  POLICY_NAME: ${{ github.event.inputs.policy_name }}
-  POLICY_FILE: trendmicro/policy.json
-  RULESET_FILE: trendmicro/runtimeruleset.json
 
 jobs:
   manage-security-policies:
     runs-on: ubuntu-latest
-    outputs:
-      policy_id: ${{ steps.create-policy.outputs.policy_id }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    env:
+      CLUSTER_NAME: ${{ github.event.inputs.customer_name }}
+      AWS_REGION: us-west-2
+      API_KEY: ${{ secrets.TRENDMICRO_API_KEY }}
+      GROUP_ID: '00000000-0000-0000-0000-000000000001'
+      RULESET_NAME: 'DemoLogOnlyRuleset'  # Changed to match the name in the JSON file
+      POLICY_NAME: 'DemoLogOnlyPolicy'    # Changed to match the name in the JSON file
+      POLICY_FILE: trendmicro/policy.json
+      RULESET_FILE: trendmicro/runtimeruleset.json
 
-      - name: Install Python dependencies
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests pyyaml
 
-      - name: Check if ruleset exists
+      - name: Make scripts executable
         run: |
-          output=$(python trendmicro/scripts/check_ruleset.py)
-          echo "$output"
-          if echo "$output" | grep -q "exists=true"; then
-            echo "Ruleset '${{ env.RULESET_NAME }}' already exists. Please use a different name and try again."
-            exit 0
-          fi
+          chmod +x trendmicro/scripts/*.py
 
-      - name: Create ruleset
+      - name: Manage Security Policies
         run: |
-          python trendmicro/scripts/create_ruleset.py
-
-      - name: Check if policy exists
-        run: |
-          output=$(python trendmicro/scripts/check_policy.py)
-          echo "$output"
-          if echo "$output" | grep -q "exists=true"; then
-            echo "Policy '${{ env.POLICY_NAME }}' already exists. Please use a different name and try again."
-            exit 0
-          fi
-
-      - name: Create policy
-        id: create-policy
-        run: |
-          python trendmicro/scripts/create_policy.py
-          output=$(python trendmicro/scripts/check_policy.py)
-          policy_id=$(echo "$output" | grep "policy_id=" | cut -d'=' -f2)
-          if [ -z "$policy_id" ]; then
-            echo "ERROR: Unable to fetch POLICY_ID"
-            exit 1
-          fi
-          echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          # Using the bash script to handle the logic
+          bash trendmicro/scripts/manage-security-policies.sh

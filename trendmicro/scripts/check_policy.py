@@ -1,43 +1,55 @@
 #!/usr/bin/env python3
+
 import requests
 import os
 import sys
-import json
+import traceback
+
 
 def check_policy():
-    API_KEY = os.environ.get('API_KEY')
-    POLICY_NAME = os.environ.get('POLICY_NAME')
+    try:
+        api_key = os.environ.get('API_KEY')
+        policy_name = os.environ.get('POLICY_NAME')
 
-    if not API_KEY or not POLICY_NAME:
-        print("Missing API_KEY or POLICY_NAME env vars")
-        sys.exit(1)
+        if not api_key or not policy_name:
+            print("Missing API_KEY or POLICY_NAME environment variables.")
+            sys.exit(1)
 
-    print(f"Checking for existing policy: {POLICY_NAME}")
+        url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
 
-    url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {API_KEY}'
-    }
+        print(f"Checking if policy '{policy_name}' exists...")
 
-    response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"Failed to fetch policies: HTTP {response.status_code}")
+            print(response.text)
+            sys.exit(1)
 
-    print(f"API Response Status: {response.status_code}")
-    print(f"API Response Body: {response.text}")
+        data = response.json()
+        found_id = ""
 
-    if response.status_code != 200:
-        print("Error querying API")
-        sys.exit(1)
+        for item in data.get("items", []):
+            if item.get("name") == policy_name:
+                found_id = item.get("id")
+                break
 
-    result = response.json()
-
-    for item in result.get("items", []):
-        if item.get("name") == POLICY_NAME:
-            print(f"Policy with name '{POLICY_NAME}' already exists with ID: {item.get('id')}")
+        if found_id:
+            print("exists=true")
+            print(f"policy_id={found_id}")
             sys.exit(0)
+        else:
+            print("exists=false")
+            sys.exit(2)
 
-    print("Policy does not exist")
-    sys.exit(2)
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     check_policy()

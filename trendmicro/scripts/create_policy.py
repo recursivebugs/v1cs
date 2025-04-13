@@ -4,100 +4,57 @@ import json
 import yaml
 import os
 import sys
-import traceback
 
 
-def load_policy_file(policy_file_path):
-    try:
-        with open(policy_file_path, 'r') as file:
-            if policy_file_path.endswith(('.yaml', '.yml')):
-                print("Detected YAML format")
-                return yaml.safe_load(file)
-            elif policy_file_path.endswith('.json'):
-                print("Detected JSON format")
-                return json.load(file)
-            else:
-                print("Unsupported policy file format. Please use .yaml, .yml, or .json")
-                sys.exit(1)
-    except Exception as e:
-        print(f"Error reading policy file: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
+def load_policy_file(filepath):
+    with open(filepath, 'r') as file:
+        if filepath.endswith(('.yaml', '.yml')):
+            return yaml.safe_load(file)
+        return json.load(file)
 
 
 def create_policy():
-    try:
-        API_KEY = os.environ.get('API_KEY')
-        POLICY_FILE = os.environ.get('POLICY_FILE')
-        RULESET_ID = os.environ.get('RULESET_ID')
-        RULESET_NAME = os.environ.get('RULESET_NAME', 'Default Ruleset')
+    api_key = os.getenv('API_KEY')
+    policy_file = os.getenv('POLICY_FILE')
+    ruleset_id = os.getenv('RULESET_ID')
 
-        if not API_KEY or not POLICY_FILE or not RULESET_ID:
-            print("Missing required environment variables: API_KEY, POLICY_FILE, RULESET_ID")
-            sys.exit(1)
-
-        if RULESET_ID == "CREATED_BUT_ID_UNKNOWN":
-            print("Error: RULESET_ID is invalid or not found. Cannot create policy without a valid ruleset ID.")
-            sys.exit(1)
-
-        print(f"Reading policy file: {POLICY_FILE}")
-        print(f"Using ruleset ID: {RULESET_ID}")
-        print(f"Using ruleset NAME: {RULESET_NAME}")
-
-        if not os.path.isfile(POLICY_FILE):
-            print(f"Error: Policy file not found at {POLICY_FILE}")
-            sys.exit(1)
-
-        policy_data = load_policy_file(POLICY_FILE)
-
-        # Auto-fix rulesetids structure
-        if "runtime" in policy_data:
-            policy_data["runtime"]["rulesetids"] = [{
-                "name": RULESET_NAME,
-                "id": RULESET_ID
-            }]
-
-        url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {API_KEY}'
-        }
-
-        print("======================================")
-        print("Sending request to API...")
-        print(f"API URL: {url}")
-        print("Headers:")
-        print(json.dumps(headers, indent=2))
-        print("Payload:")
-        print(json.dumps(policy_data, indent=2))
-
-        response = requests.post(url, headers=headers, json=policy_data)
-
-        print(f"API Response Status: {response.status_code}")
-        print(f"API Response Body: {response.text}")
-
-        if response.status_code in [200, 201]:
-            if response.text.strip():
-                try:
-                    result = response.json()
-                    policy_id = result.get('id', 'CREATED_BUT_ID_UNKNOWN')
-                except Exception:
-                    policy_id = 'CREATED_BUT_ID_UNKNOWN'
-            else:
-                policy_id = 'CREATED_BUT_ID_UNKNOWN'
-
-            print(f"Policy created successfully with ID: {policy_id}")
-            print(f"policy_id={policy_id}")
-
-        else:
-            print(f"Failed to create policy: HTTP {response.status_code}")
-            sys.exit(1)
-
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        traceback.print_exc()
+    if not api_key or not policy_file or not ruleset_id:
+        print("Missing required environment variables.")
         sys.exit(1)
+
+    if ruleset_id == "CREATED_BUT_ID_UNKNOWN":
+        print("Invalid RULESET_ID detected. Exiting.")
+        sys.exit(1)
+
+    if not os.path.isfile(policy_file):
+        print(f"Policy file not found: {policy_file}")
+        sys.exit(1)
+
+    policy_data = load_policy_file(policy_file)
+
+    # Ensure ruleset ID format is correct
+    if isinstance(policy_data.get("runtime", {}).get("rulesetids", []), list):
+        policy_data["runtime"]["rulesetids"] = [ruleset_id]
+
+    url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    print(f"Sending request to create policy: {policy_file}")
+    response = requests.post(url, headers=headers, json=policy_data)
+
+    print(f"API Response Status: {response.status_code}")
+    print(f"API Response Body: {response.text}")
+
+    if response.status_code not in [200, 201]:
+        print("Failed to create policy")
+        sys.exit(1)
+
+    policy_id = response.json().get("id", "CREATED_BUT_ID_UNKNOWN")
+    print(f"policy_id={policy_id}")
 
 
 if __name__ == "__main__":

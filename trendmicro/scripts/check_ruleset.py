@@ -12,22 +12,30 @@ headers = {
 }
 
 try:
+    print(f"Checking if ruleset '{ruleset_name}' exists...")
+    print(f"API URL: {api_url}")
+    
     res = requests.get(f"{api_url}/rulesets", headers=headers)
-    print(f"HTTP status code: {res.status_code}")
+    print(f"Response status code: {res.status_code}")
     
     if res.status_code != 200:
-        print(f"Failed to list rulesets: {res.text}")
+        print(f"Error response: {res.text}")
         sys.exit(1)
 
     rulesets = res.json().get("items", [])
+    print(f"Found {len(rulesets)} rulesets")
+    
     for rs in rulesets:
         if rs.get("name") == ruleset_name:
-            print(f"exists=true id={rs['id']}")
+            ruleset_id = rs.get("id", "")
+            print(f"Ruleset '{ruleset_name}' exists with ID: {ruleset_id}")
+            print(f"exists=true id={ruleset_id}")
             sys.exit(0)
 
+    print(f"Ruleset '{ruleset_name}' not found.")
     print("exists=false")
-    sys.exit(2)
+    sys.exit(0)
 
 except Exception as e:
-    print(f"[EXCEPTION] {e}")
+    print(f"[ERROR] Failed to check ruleset: {e}")
     sys.exit(1)

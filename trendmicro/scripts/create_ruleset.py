@@ -31,7 +31,6 @@ try:
 
     if res.status_code == 201:
         try:
-            # Try getting from JSON body
             ruleset_id = res.json().get("id", "")
         except Exception:
             print("⚠️ No JSON body found, trying Location header...")

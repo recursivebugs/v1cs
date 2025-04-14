@@ -1,10 +1,14 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Creating Policy '$POLICY_NAME' with Ruleset ID '$RULESET_ID'..."
+echo "🔍 Checking if policy '${POLICY_NAME}' exists..."
 
-payload=$(jq --arg name "$POLICY_NAME" --arg id "$RULESET_ID" '.name = $name | .runtimeRuleset.id = $id' trendmicro/payloads/policy.json)
+response=$(curl -s -X GET "${API_URL}/policies" -H "Authorization: Bearer ${API_KEY}" -H "accept: application/json")
 
-resp=$(curl -s -X POST "$API_URL/policies" -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" -H "Content-Type: application/json" -d "$payload")
-
-echo "✅ Created Policy successfully"
+if echo "$response" | jq -e --arg name "$POLICY_NAME" '.items[]? | select(.name==$name)' > /dev/null; then
+  echo "✅ Policy '${POLICY_NAME}' already exists."
+  echo "POLICY_EXISTS=true" >> $GITHUB_ENV
+else
+  echo "❌ Policy does not exist."
+  echo "POLICY_EXISTS=false" >> $GITHUB_ENV
+fi

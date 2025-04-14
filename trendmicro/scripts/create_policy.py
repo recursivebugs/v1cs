@@ -17,16 +17,15 @@ headers = {
 
 try:
     with open(policy_path) as f:
-        policy = json.load(f)
+        data = json.load(f)
 
-    policy["name"] = policy_name
-
-    if "rulesets" in policy:
-        policy["rulesets"][0]["id"] = ruleset_id
+    data["name"] = policy_name
+    if "rulesets" in data:
+        data["rulesets"][0]["id"] = ruleset_id
     else:
-        policy["rulesets"] = [{"id": ruleset_id}]
+        data["rulesets"] = [{"id": ruleset_id}]
 
-    res = requests.post(url, headers=headers, json=policy)
+    res = requests.post(url, headers=headers, json=data)
     if res.status_code == 201:
         print("Policy created successfully.")
         sys.exit(0)

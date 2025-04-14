@@ -116,12 +116,12 @@ jobs:
         id: ruleset-create
         run: |
           set +e
-          output=$(python trendmicro/scripts/create_ruleset.py)
+          output=$(python trendmicro/scripts/create_ruleset.py 2>&1)
           status=$?
           echo "$output"
           echo "Script exited with code $status"
           if [ "$status" -eq 0 ]; then
-            id=$(echo "$output" | awk -F'=' '{print $2}')
+            id=$(echo "$output" | grep 'ruleset_id=' | awk -F'=' '{print $2}')
             echo "ruleset_id=$id" >> $GITHUB_OUTPUT
           else
             echo "🔥 Failed to create ruleset."
@@ -130,7 +130,7 @@ jobs:
 
   create-policy:
     runs-on: ubuntu-latest
-    needs: [check-ruleset, create-ruleset]
+    needs: check-ruleset  # only depends on check-ruleset now
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -148,10 +148,7 @@ jobs:
       - name: Determine Ruleset ID
         id: ruleset-id
         run: |
-          id=${{ needs.check-ruleset.outputs.ruleset_id }}
-          if [ "$id" == "" ]; then
-            id=${{ needs.create-ruleset.outputs.ruleset_id }}
-          fi
+          id="${{ needs.check-ruleset.outputs.ruleset_id }}"
           echo "RULESET_ID=$id" >> $GITHUB_ENV
 
       - name: Create Policy

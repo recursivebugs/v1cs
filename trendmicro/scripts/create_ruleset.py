@@ -4,6 +4,7 @@ import os
 import json
 
 api_key = os.getenv("API_KEY")
+ruleset_name = os.getenv("RULESET_NAME")
 ruleset_path = "trendmicro/runtimeruleset.json"
 
 url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
@@ -16,6 +17,8 @@ headers = {
 try:
     with open(ruleset_path) as f:
         data = json.load(f)
+
+    data["name"] = ruleset_name
 
     res = requests.post(url, headers=headers, json=data)
     res.raise_for_status()

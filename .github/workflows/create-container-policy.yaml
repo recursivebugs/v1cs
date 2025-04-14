@@ -178,6 +178,8 @@ jobs:
     name: Create Policy
     runs-on: ubuntu-latest
     needs: [check-policy, check-ruleset, create-ruleset]
+    # Always run if policy doesn't exist, regardless of whether ruleset was created or existed
+    if: always() && needs.check-policy.result == 'success'
     steps:
       - uses: actions/checkout@v3
       
@@ -193,20 +195,40 @@ jobs:
           if [[ "${{ needs.check-ruleset.outputs.ruleset_exists }}" == "true" ]]; then
             echo "ruleset_id=${{ needs.check-ruleset.outputs.ruleset_id }}" >> $GITHUB_ENV
             echo "Using existing ruleset ID: ${{ needs.check-ruleset.outputs.ruleset_id }}"
-          else
+          elif [[ "${{ needs.create-ruleset.result }}" == "success" ]]; then
             echo "ruleset_id=${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_ENV
             echo "Using newly created ruleset ID: ${{ needs.create-ruleset.outputs.ruleset_id }}"
+          else
+            echo "::error::No valid ruleset ID available. Cannot proceed with policy creation."
+            exit 1
           fi
       
       - name: Prepare policy file
+        id: prepare-policy
         run: |
           echo "Preparing policy file with ruleset ID: ${{ env.ruleset_id }}"
           mkdir -p artifacts
           
+          # Check if ruleset ID exists
+          if [[ -z "${{ env.ruleset_id }}" ]]; then
+            echo "::error::Ruleset ID is empty. Cannot proceed."
+            exit 1
+          fi
+          
           # Create a temporary policy file with the updated ruleset ID
-          jq --arg rid "${{ env.ruleset_id }}" '.runtime.rulesetids[0].id = $rid' trendmicro/policy.json > "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
+          cp trendmicro/policy.json policy_tmp.json
+          
+          # Use jq to update the ruleset ID in the policy file
+          cat policy_tmp.json | jq --arg rid "${{ env.ruleset_id }}" '.runtime.rulesetids[0].id = $rid' > "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
+          
+          # If the jq command fails or produces an invalid file, try a simpler approach
+          if [ $? -ne 0 ] || [ ! -s "artifacts/${{ github.event.inputs.POLICY_NAME }}.json" ]; then
+            echo "Warning: jq command failed, trying alternative approach with sed"
+            cat trendmicro/policy.json | sed -e 's/"id": "DemoLogOnlyRuleset-[^"]*"/"id": "${{ env.ruleset_id }}"/' > "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
+          fi
           
           # Display the updated policy content
+          echo "Updated policy file content:"
           cat "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
           
           # Also create a copy for the build process
@@ -215,6 +237,7 @@ jobs:
           echo "POLICY_FILE=trendmicro/policy_updated.json" >> $GITHUB_ENV
           
           # List the files to verify they exist
+          echo "Files in artifacts directory:"
           ls -la artifacts/
       
       - name: Create Policy

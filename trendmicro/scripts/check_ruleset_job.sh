@@ -1,17 +1,20 @@
-#!/usr/bin/env bash
-set +e
-output=$(python trendmicro/scripts/check_ruleset.py)
+#!/bin/bash
+set -e
+
+echo "🔍 Checking if policy '$POLICY_NAME' exists..."
+
+output=$(python trendmicro/scripts/check_policy.py 2>&1)
 status=$?
+
 echo "$output"
 
 if [ "$status" -eq 0 ]; then
-  id=$(echo "$output" | awk -F'id=' '{print $2}' | xargs)
-  echo "exists=true" >> $GITHUB_OUTPUT
-  echo "ruleset_id=$id" >> $GITHUB_OUTPUT
+  echo "✅ Policy '$POLICY_NAME' already exists."
+  echo "true" > trendmicro/scripts/check_policy_output.txt
 elif [ "$status" -eq 2 ]; then
-  echo "exists=false" >> $GITHUB_OUTPUT
+  echo "🆕 Policy '$POLICY_NAME' not found."
+  echo "false" > trendmicro/scripts/check_policy_output.txt
 else
-  echo "🔥 Failed to check ruleset."
+  echo "❌ Unknown error while checking policy."
   exit $status
 fi
-exit 0

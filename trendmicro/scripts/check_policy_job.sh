@@ -7,8 +7,8 @@ resp=$(curl -s -X GET "$API_URL/policies" -H "Authorization: Bearer $API_KEY" -H
 
 if echo "$resp" | jq -e --arg name "$POLICY_NAME" '.items[]? | select(.name == $name)' >/dev/null; then
   echo "✅ Policy exists."
-  EXISTS=true
+  echo "exists=true" >> $GITHUB_ENV
 else
   echo "❌ Policy does not exist."
-  EXISTS=false
+  echo "exists=false" >> $GITHUB_ENV
 fi

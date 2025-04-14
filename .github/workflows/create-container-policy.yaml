@@ -3,45 +3,37 @@ name: Create Vision One Container Security Policy
 on:
   workflow_dispatch:
     inputs:
-      POLICY_NAME:
-        description: "Name of the Container Security Policy"
-        required: true
-        default: "DemoLogOnlyPolicy"
       RULESET_NAME:
-        description: "Name of the Ruleset"
+        description: 'Ruleset Name'
         required: true
-        default: "DemoLogOnlyRuleset"
+        default: 'DemoLogOnlyRuleset'
+      POLICY_NAME:
+        description: 'Policy Name'
+        required: true
+        default: 'DemoLogOnlyPolicy'
 
 env:
   API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
   API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
 
 jobs:
-
   check-policy:
     name: Check if Policy Exists
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.set-result.outputs.exists }}
+      exists: ${{ steps.set-output.outputs.exists }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Check Policy via API
-        run: bash trendmicro/scripts/check_policy_job.sh
-        env:
-          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
-
-      - name: Set Result Output
-        id: set-result
-        run: echo "exists=$exists" >> $GITHUB_OUTPUT
-
+      - uses: actions/checkout@v3
+      - name: Check Policy
+        id: set-output
+        run: |
+          bash trendmicro/scripts/check_policy_job.sh
+          echo "exists=$exists" >> $GITHUB_OUTPUT
       - name: Summary
         run: |
           echo "### Check Policy Job" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Policy Name: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "Exists: $exists" >> $GITHUB_STEP_SUMMARY
+          echo "Exists: ${{ steps.set-output.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
 
   check-ruleset:
     name: Check if Ruleset Exists
@@ -49,57 +41,38 @@ jobs:
     needs: check-policy
     if: needs.check-policy.outputs.exists == 'false'
     outputs:
-      exists: ${{ steps.set-result.outputs.exists }}
-      ruleset_id: ${{ steps.set-result.outputs.ruleset_id }}
+      exists: ${{ steps.set-output.outputs.exists }}
+      ruleset_id: ${{ steps.set-output.outputs.ruleset_id }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Check Ruleset via API
-        run: bash trendmicro/scripts/check_ruleset_job.sh
-        env:
-          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
-
-      - name: Set Result Output
-        id: set-result
+      - uses: actions/checkout@v3
+      - name: Check Ruleset
+        id: set-output
         run: |
-          echo "exists=$exists" >> $GITHUB_OUTPUT
-          echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
-
+          bash trendmicro/scripts/check_ruleset_job.sh
       - name: Summary
         run: |
           echo "### Check Ruleset Job" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Ruleset Name: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "Exists: ${{ steps.set-result.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset ID: ${{ steps.set-result.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Exists: ${{ steps.set-output.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ruleset ID: ${{ steps.set-output.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
   create-ruleset:
-    name: Create Ruleset (if missing)
+    name: Create Ruleset
     runs-on: ubuntu-latest
     needs: check-ruleset
     if: needs.check-ruleset.outputs.exists == 'false'
     outputs:
-      ruleset_id: ${{ steps.set-result.outputs.ruleset_id }}
+      ruleset_id: ${{ steps.set-output.outputs.ruleset_id }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
       - name: Create Ruleset
-        run: bash trendmicro/scripts/create_ruleset_job.sh
-        env:
-          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
-
-      - name: Set Result Output
-        id: set-result
-        run: echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
-
+        id: set-output
+        run: |
+          bash trendmicro/scripts/create_ruleset_job.sh
       - name: Summary
         run: |
           echo "### Create Ruleset Job" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset Created: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset ID: ${{ steps.set-result.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ruleset Created ID: ${{ steps.set-output.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
   create-policy:
     name: Create Policy
@@ -107,18 +80,11 @@ jobs:
     needs: [check-ruleset, create-ruleset]
     if: needs.check-policy.outputs.exists == 'false'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
       - name: Create Policy
-        run: bash trendmicro/scripts/create_policy_job.sh
-        env:
-          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
-          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id || needs.check-ruleset.outputs.ruleset_id }}
-
+        run: |
+          bash trendmicro/scripts/create_policy_job.sh
       - name: Summary
         run: |
           echo "### Create Policy Job" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Policy Name: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "Linked Ruleset ID: ${{ env.RULESET_ID }}" >> $GITHUB_STEP_SUMMARY

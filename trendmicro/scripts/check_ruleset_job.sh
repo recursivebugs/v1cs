@@ -4,10 +4,9 @@ set -e
 echo "🔧 DEBUG INFO:"
 echo "  - API_URL: $API_URL"
 echo "  - RULESET_NAME: $RULESET_NAME"
-echo "  - API_KEY length: ${#API_KEY}"  # Do not echo the actual key for security
+echo "  - API_KEY length: ${#API_KEY}"
 echo "🔍 Checking if ruleset '${RULESET_NAME}' exists..."
 
-# Ensure required environment variables are set
 if [[ -z "$API_URL" || -z "$API_KEY" || -z "$RULESET_NAME" ]]; then
   echo "❌ Missing required environment variables."
   [[ -z "$API_URL" ]] && echo "  - API_URL is empty"
@@ -16,16 +15,24 @@ if [[ -z "$API_URL" || -z "$API_KEY" || -z "$RULESET_NAME" ]]; then
   exit 1
 fi
 
-response=$(curl -s -X GET "${API_URL}/runtimeSecurityRulesets" \
+# Use curl with status capture
+response=$(mktemp)
+status_code=$(curl -s -o "$response" -w "%{http_code}" -X GET "${API_URL}/runtimeSecurityRulesets" \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Accept: application/json")
 
-# Show snippet of response for debug (limited to 300 chars to avoid flooding log)
-echo "🧾 Partial API Response: $(echo "$response" | cut -c 1-300)..."
+echo "🌐 HTTP Status: $status_code"
 
-ruleset_id=$(echo "$response" | jq -r --arg NAME "$RULESET_NAME" '.items[] | select(.name == $NAME) | .id')
+if [[ "$status_code" -ne 200 ]]; then
+  echo "❌ Failed to retrieve rulesets. Response:"
+  cat "$response"
+  exit 5
+fi
 
-if [ -n "$ruleset_id" ]; then
+# Now safe to use jq
+ruleset_id=$(jq -r --arg NAME "$RULESET_NAME" '.items[] | select(.name == $NAME) | .id' < "$response")
+
+if [[ -n "$ruleset_id" && "$ruleset_id" != "null" ]]; then
   echo "✅ Ruleset '${RULESET_NAME}' exists with id: $ruleset_id"
   echo "exists=true" >> $GITHUB_OUTPUT
   echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT

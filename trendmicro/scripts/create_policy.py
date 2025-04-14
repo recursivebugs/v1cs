@@ -20,6 +20,7 @@ try:
         data = json.load(f)
 
     data["name"] = policy_name
+
     if "rulesets" in data:
         data["rulesets"][0]["id"] = ruleset_id
     else:

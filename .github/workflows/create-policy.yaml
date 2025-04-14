@@ -2,97 +2,100 @@ name: Create Vision One Container Security Policy
 
 on:
   workflow_dispatch:
+    inputs:
+      ruleset_name:
+        description: 'Ruleset Name'
+        required: false
+        default: 'DemoLogOnlyRuleset'
+      policy_name:
+        description: 'Policy Name'
+        required: false
+        default: 'DemoLogOnlyPolicy'
 
 env:
   API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
   API_KEY: ${{ secrets.V1_API_KEY }}
-  RULESET_NAME: DemoLogOnlyRuleset
-  POLICY_NAME: DemoLogOnlyPolicy
+  RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
+  POLICY_NAME: ${{ github.event.inputs.policy_name }}
 
 jobs:
   check-policy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Check if Policy Exists
         run: |
-          response=$(curl -s -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$API_URL/policies")
-          if echo "$response" | grep -q "\"name\": \"$POLICY_NAME\""; then
-            echo "Policy $POLICY_NAME already exists. Exiting..."
-            exit 1
-          fi
+          python trendmicro/scripts/check_policy.py
 
   check-ruleset:
     runs-on: ubuntu-latest
     needs: check-policy
     outputs:
-      ruleset_id: ${{ steps.get-id.outputs.ruleset_id }}
+      exists: ${{ steps.ruleset-check.outputs.exists }}
+      ruleset_id: ${{ steps.ruleset-check.outputs.ruleset_id }}
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Check if Ruleset Exists
-        id: get-id
+        id: ruleset-check
         run: |
-          response=$(curl -s -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$API_URL/rulesets")
-          RULESET_ID=$(echo "$response" | jq -r ".items[] | select(.name==\"$RULESET_NAME\") | .id")
-          
-          if [ -n "$RULESET_ID" ]; then
-            echo "Ruleset exists: $RULESET_ID"
-            echo "ruleset_id=$RULESET_ID" >> $GITHUB_OUTPUT
+          output=$(python trendmicro/scripts/check_ruleset.py)
+          echo "$output"
+          if echo "$output" | grep -q "exists=true"; then
+            id=$(echo "$output" | awk -F'id=' '{print $2}')
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "ruleset_id=$id" >> $GITHUB_OUTPUT
           else
-            echo "ruleset_id=none" >> $GITHUB_OUTPUT
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
   create-ruleset:
     runs-on: ubuntu-latest
     needs: check-ruleset
-    if: needs.check-ruleset.outputs.ruleset_id == 'none'
+    if: needs.check-ruleset.outputs.exists == 'false'
     outputs:
-      ruleset_id: ${{ steps.create.outputs.ruleset_id }}
+      ruleset_id: ${{ steps.ruleset-create.outputs.ruleset_id }}
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Create Ruleset
-        id: create
+        id: ruleset-create
         run: |
-          RULESET_ID=$(curl -s -X POST "$API_URL/rulesets" \
-            -H "Authorization: Bearer $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @trendmicro/runtimeruleset.json | jq -r ".id")
-          
-          if [ "$RULESET_ID" == "null" ]; then
-            echo "Ruleset creation failed"
-            exit 1
-          fi
-          echo "Created Ruleset: $RULESET_ID"
-          echo "ruleset_id=$RULESET_ID" >> $GITHUB_OUTPUT
+          id=$(python trendmicro/scripts/create_ruleset.py | awk -F'=' '{print $2}')
+          echo "ruleset_id=$id" >> $GITHUB_OUTPUT
 
   create-policy:
     runs-on: ubuntu-latest
     needs: [check-ruleset, create-ruleset]
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Determine Ruleset ID
+        id: ruleset-id
         run: |
-          RULESET_ID=${{ needs.check-ruleset.outputs.ruleset_id }}
-          if [ "$RULESET_ID" == "none" ]; then
-            RULESET_ID=${{ needs.create-ruleset.outputs.ruleset_id }}
+          id=${{ needs.check-ruleset.outputs.ruleset_id }}
+          if [ "$id" == "" ]; then
+            id=${{ needs.create-ruleset.outputs.ruleset_id }}
           fi
-          jq --arg id "$RULESET_ID" '.rulesets[0].id=$id' trendmicro/policy.json > tmp_policy.json
+          echo "ruleset_id=$id" >> $GITHUB_ENV
 
       - name: Create Policy
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/policies" \
-            -H "Authorization: Bearer $API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @tmp_policy.json)
-
-          if [ "$response" -ne 201 ]; then
-            echo "Policy creation failed with HTTP code: $response"
-            exit 1
-          fi
+          python trendmicro/scripts/create_policy.py
 
   cleanup-ruleset:
     runs-on: ubuntu-latest
-    needs: create-policy
+    needs: [create-policy, create-ruleset]
     if: failure() && needs.create-ruleset.result == 'success'
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
       - name: Delete Ruleset
         run: |
-          RULESET_ID=${{ needs.create-ruleset.outputs.ruleset_id }}
-          curl -s -X DELETE "$API_URL/rulesets/$RULESET_ID" \
-            -H "Authorization: Bearer $API_KEY"
+          python trendmicro/scripts/delete_ruleset.py

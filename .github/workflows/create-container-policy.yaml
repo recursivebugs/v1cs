@@ -1,138 +1,63 @@
-name: Create Vision One Container Security Policy
-on:
-  workflow_dispatch:
-    inputs:
-      RULESET_NAME:
-        description: 'Ruleset Name'
-        required: true
-        default: 'DemoLogOnlyRuleset'
-      POLICY_NAME:
-        description: 'Policy Name'
-        required: true
-        default: 'DemoLogOnlyPolicy'
-env:
-  API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
+import requests
+import sys
+import os
+import json
 
-jobs:
-  check-policy:
-    name: Check if Policy Exists
-    runs-on: ubuntu-latest
-    outputs:
-      policy_exists: ${{ steps.check-policy.outputs.exists }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Check Policy
-        id: check-policy
-        run: |
-          output=$(python trendmicro/scripts/check_policy.py)
-          echo "$output"
-          if echo "$output" | grep -q "already exists"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "❌ Policy already exists. Aborting workflow."
-            exit 1
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✅ Policy does not exist. Proceeding..."
-          fi
-        env:
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
+api_key = os.getenv("API_KEY")
+ruleset_id = os.getenv("RULESET_ID")
+policy_name = os.getenv("POLICY_NAME")
+api_url = os.getenv("API_URL", "https://api.xdr.trendmicro.com/beta/containerSecurity")
+policy_file = os.getenv("POLICY_FILE", "trendmicro/policy.json")
 
-  check-ruleset:
-    name: Check if Ruleset Exists
-    runs-on: ubuntu-latest
-    needs: check-policy
-    outputs:
-      ruleset_exists: ${{ steps.check-ruleset.outputs.exists }}
-      ruleset_id: ${{ steps.check-ruleset.outputs.ruleset_id }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Check Ruleset
-        id: check-ruleset
-        run: |
-          output=$(python trendmicro/scripts/check_ruleset.py)
-          echo "$output"
-          if echo "$output" | grep -q "exists=true"; then
-            ruleset_id=$(echo "$output" | grep -o "id=.*" | cut -d= -f2)
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
-            echo "✅ Ruleset exists with ID: $ruleset_id"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "❓ Ruleset does not exist. Will create it in next job."
-          fi
-        env:
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
-          API_URL: ${{ env.API_URL }}
+headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+}
 
-  create-ruleset:
-    name: Create Ruleset
-    runs-on: ubuntu-latest
-    needs: [check-policy, check-ruleset]
-    if: needs.check-ruleset.outputs.ruleset_exists == 'false'
-    outputs:
-      ruleset_id: ${{ steps.create-ruleset.outputs.ruleset_id }}
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Create Ruleset
-        id: create-ruleset
-        run: |
-          output=$(python trendmicro/scripts/create_ruleset.py)
-          echo "$output"
-          if echo "$output" | grep -q "id="; then
-            ruleset_id=$(echo "$output" | grep -o "id=.*" | cut -d= -f2)
-            echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
-            echo "✅ Successfully created ruleset with ID: $ruleset_id"
-          else
-            echo "❌ Failed to create ruleset"
-            exit 1
-          fi
-        env:
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
+policy_url = f"{api_url}/policies"
 
-  create-policy:
-    name: Create Policy
-    runs-on: ubuntu-latest
-    needs: [check-policy, check-ruleset, create-ruleset]
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Determine Ruleset ID
-        id: get-ruleset-id
-        run: |
-          if [[ "${{ needs.check-ruleset.outputs.ruleset_exists }}" == "true" ]]; then
-            echo "ruleset_id=${{ needs.check-ruleset.outputs.ruleset_id }}" >> $GITHUB_ENV
-            echo "Using existing ruleset ID: ${{ needs.check-ruleset.outputs.ruleset_id }}"
-          else
-            echo "ruleset_id=${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_ENV
-            echo "Using newly created ruleset ID: ${{ needs.create-ruleset.outputs.ruleset_id }}"
-          fi
-      
-      - name: Create Policy
-        run: |
-          python trendmicro/scripts/create_policy.py
-          echo "✅ Policy created successfully"
-        env:
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
-          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
-          RULESET_ID: ${{ env.ruleset_id }}
+try:
+    print(f"Creating policy '{policy_name}' with ruleset ID '{ruleset_id}'...")
+    print(f"API URL: {policy_url}")
+    print(f"Policy file: {policy_file}")
+    
+    with open(policy_file) as f:
+        data = json.load(f)
 
-  cleanup-ruleset:
-    name: Delete Ruleset on Policy Creation Failure
-    runs-on: ubuntu-latest
-    needs: [create-policy, create-ruleset]
-    if: failure() && needs.create-ruleset.result == 'success'
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Delete Ruleset
-        run: python trendmicro/scripts/delete_ruleset.py
-        env:
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id }}
+    data["name"] = policy_name
+    
+    # Update the ruleset ID in the policy
+    if "runtime" in data and "rulesetids" in data["runtime"] and len(data["runtime"]["rulesetids"]) > 0:
+        if isinstance(data["runtime"]["rulesetids"][0], dict):
+            data["runtime"]["rulesetids"][0]["id"] = ruleset_id
+        else:
+            # Handle the case where rulesetids is a list of strings
+            data["runtime"]["rulesetids"][0] = ruleset_id
+    else:
+        print("[WARNING] Could not find runtime.rulesetids in policy structure")
+        data["runtime"] = {"rulesetids": [{"name": os.getenv("RULESET_NAME"), "id": ruleset_id}]}
+
+    print("📦 Creating Policy with payload:")
+    print(json.dumps(data, indent=2))
+
+    res = requests.post(policy_url, headers=headers, json=data)
+    print(f"HTTP status code: {res.status_code}")
+    print(f"Response: {res.text}")
+
+    if res.status_code == 201:
+        try:
+            policy_id = res.json().get("id", "unknown")
+            print(f"policy_id={policy_id}")
+        except Exception:
+            print("⚠️ No JSON body in response")
+            
+        print("✅ Policy created successfully.")
+        sys.exit(0)
+    else:
+        print(f"[ERROR] Failed to create policy: {res.status_code} {res.text}")
+        sys.exit(1)
+
+except Exception as e:
+    print(f"[EXCEPTION] {e}")
+    sys.exit(1)

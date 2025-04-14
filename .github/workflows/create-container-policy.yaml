@@ -3,154 +3,151 @@ name: Create Vision One Container Security Policy
 on:
   workflow_dispatch:
     inputs:
-      ruleset_name:
+      RULESET_NAME:
         description: 'Ruleset Name'
         required: true
         default: 'DemoLogOnlyRuleset'
-      policy_name:
+      POLICY_NAME:
         description: 'Policy Name'
         required: true
         default: 'DemoLogOnlyPolicy'
 
+env:
+  API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
+  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
+
 jobs:
-#################################################################
 # 1. Check if Policy Exists
-#################################################################
   check-policy:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.check.outputs.exists }}
-      policy_id: ${{ steps.check.outputs.policy_id }}
+      exists: ${{ steps.set-exists.outputs.exists }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Check Policy
-        id: check
-        env:
-          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          POLICY_NAME: ${{ inputs.policy_name }}
+      - name: Run Check Policy
         run: bash trendmicro/scripts/check_policy_job.sh
+        env:
+          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
 
-      - name: Summary - Check Policy
+      - name: Set Output
+        id: set-exists
+        run: echo "exists=$(cat trendmicro/scripts/check_policy_output.txt)" >> $GITHUB_OUTPUT
+
+      - name: Job Summary
         run: |
           echo "### Check Policy Job" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Policy Name: ${{ inputs.policy_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
-          echo "Policy ID: ${{ steps.check.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Policy Name: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "Exists: ${{ steps.set-exists.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
 
-#################################################################
 # 2. Check if Ruleset Exists
-#################################################################
   check-ruleset:
     needs: check-policy
     if: needs.check-policy.outputs.exists == 'false'
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.check.outputs.exists }}
-      ruleset_id: ${{ steps.check.outputs.ruleset_id }}
+      exists: ${{ steps.set-exists.outputs.exists }}
+      ruleset_id: ${{ steps.set-exists.outputs.ruleset_id }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Check Ruleset
-        id: check
-        env:
-          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_NAME: ${{ inputs.ruleset_name }}
+      - name: Run Check Ruleset
         run: bash trendmicro/scripts/check_ruleset_job.sh
+        env:
+          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
 
-      - name: Summary - Check Ruleset
+      - name: Set Output
+        id: set-exists
+        run: |
+          echo "exists=$(cat trendmicro/scripts/check_ruleset_exists.txt)" >> $GITHUB_OUTPUT
+          echo "ruleset_id=$(cat trendmicro/scripts/check_ruleset_id.txt)" >> $GITHUB_OUTPUT
+
+      - name: Job Summary
         run: |
           echo "### Check Ruleset Job" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset Name: ${{ inputs.ruleset_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset ID: ${{ steps.check.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ruleset Name: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "Exists: ${{ steps.set-exists.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ruleset ID: ${{ steps.set-exists.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
-#################################################################
-# 3. Create Ruleset (Only if missing)
-#################################################################
+# 3. Create Ruleset if Not Exists
   create-ruleset:
     needs: check-ruleset
     if: needs.check-ruleset.outputs.exists == 'false'
     runs-on: ubuntu-latest
     outputs:
-      ruleset_id: ${{ steps.create.outputs.ruleset_id }}
+      ruleset_id: ${{ steps.set-id.outputs.ruleset_id }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Create Ruleset
-        id: create
-        env:
-          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_NAME: ${{ inputs.ruleset_name }}
+      - name: Run Create Ruleset
         run: bash trendmicro/scripts/create_ruleset_job.sh
+        env:
+          RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
 
-      - name: Summary - Create Ruleset
+      - name: Set Output
+        id: set-id
+        run: echo "ruleset_id=$(cat trendmicro/scripts/created_ruleset_id.txt)" >> $GITHUB_OUTPUT
+
+      - name: Job Summary
         run: |
           echo "### Create Ruleset Job" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset Name: ${{ inputs.ruleset_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset ID: ${{ steps.create.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ruleset ID: ${{ steps.set-id.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
-#################################################################
-# 4. Create Policy (Always uses correct Ruleset ID)
-#################################################################
+
+# 4. Create Policy
   create-policy:
     needs: [check-policy, check-ruleset, create-ruleset]
     if: needs.check-policy.outputs.exists == 'false'
     runs-on: ubuntu-latest
     outputs:
-      policy_id: ${{ steps.create.outputs.policy_id }}
+      policy_id: ${{ steps.set-id.outputs.policy_id }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Create Policy
-        id: create
-        env:
-          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          POLICY_NAME: ${{ inputs.policy_name }}
-          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id || needs.check-ruleset.outputs.ruleset_id }}
-        run: bash trendmicro/scripts/create_policy_job.sh
+      - name: Determine Ruleset ID
+        run: |
+          echo "ruleset_id=${{ needs.create-ruleset.outputs.ruleset_id || needs.check-ruleset.outputs.ruleset_id }}" > trendmicro/scripts/selected_ruleset_id.txt
 
-      - name: Summary - Create Policy
+      - name: Run Create Policy
+        run: bash trendmicro/scripts/create_policy_job.sh
+        env:
+          POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
+          RULESET_ID: $(cat trendmicro/scripts/selected_ruleset_id.txt)
+
+      - name: Set Output
+        id: set-id
+        run: echo "policy_id=$(cat trendmicro/scripts/created_policy_id.txt)" >> $GITHUB_OUTPUT
+
+      - name: Job Summary
         run: |
           echo "### Create Policy Job" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Policy Name: ${{ inputs.policy_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Policy ID: ${{ steps.create.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Policy ID: ${{ steps.set-id.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
 
-#################################################################
-# 5. Delete Ruleset if Policy Creation Failed
-#################################################################
+
+# 5. Cleanup Ruleset if Policy Failed
   delete-ruleset:
-    needs: [create-policy, create-ruleset]
-    if: |
-      always() &&
-      needs.create-policy.result == 'failure' &&
-      needs.create-ruleset.result == 'success'
+    needs: create-policy
+    if: failure() && needs.create-ruleset.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Delete Ruleset
-        env:
-          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
-          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id }}
+      - name: Run Delete Ruleset
         run: bash trendmicro/scripts/delete_ruleset_job.sh
+        env:
+          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id }}
 
-      - name: Summary - Delete Ruleset
+      - name: Job Summary
         run: |
           echo "### Delete Ruleset Job" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Ruleset ID (Deleted): ${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "Deleted Ruleset ID: ${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY

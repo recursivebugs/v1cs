@@ -139,7 +139,7 @@ jobs:
           echo "# Ruleset ID: ${{ steps.create-ruleset.outputs.ruleset_id }}" > "artifacts/${{ github.event.inputs.RULESET_NAME }}.id.txt"
       
       - name: Upload ruleset artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ruleset-files
           path: artifacts/
@@ -214,7 +214,7 @@ jobs:
           POLICY_FILE: ${{ env.POLICY_FILE }}
       
       - name: Upload policy artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: policy-files
           path: artifacts/

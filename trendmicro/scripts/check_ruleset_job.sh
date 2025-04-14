@@ -1,20 +1,22 @@
 #!/bin/bash
 set -e
 
-echo "🔍 Checking if policy '$POLICY_NAME' exists..."
+echo "🔍 Checking if ruleset '${RULESET_NAME}' exists..."
 
-output=$(python trendmicro/scripts/check_policy.py 2>&1)
-status=$?
+response=$(curl -s -X GET "${API_URL}/runtimeSecurityRulesets" \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -H "Accept: application/json")
 
-echo "$output"
+ruleset_id=$(echo "$response" | jq -r --arg NAME "$RULESET_NAME" '.items[] | select(.name == $NAME) | .id')
 
-if [ "$status" -eq 0 ]; then
-  echo "✅ Policy '$POLICY_NAME' already exists."
-  echo "true" > trendmicro/scripts/check_policy_output.txt
-elif [ "$status" -eq 2 ]; then
-  echo "🆕 Policy '$POLICY_NAME' not found."
-  echo "false" > trendmicro/scripts/check_policy_output.txt
+if [ -n "$ruleset_id" ]; then
+  echo "✅ Ruleset '${RULESET_NAME}' exists with id: $ruleset_id"
+  echo "exists=true" >> $GITHUB_OUTPUT
+  echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
+  exit 0
 else
-  echo "❌ Unknown error while checking policy."
-  exit $status
+  echo "❌ Ruleset '${RULESET_NAME}' not found."
+  echo "exists=false" >> $GITHUB_OUTPUT
+  echo "ruleset_id=" >> $GITHUB_OUTPUT
+  exit 2
 fi

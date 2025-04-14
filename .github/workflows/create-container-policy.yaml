@@ -33,7 +33,7 @@ jobs:
           echo "$output"
           if echo "$output" | grep -q "already exists"; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "❌ Policy already exists. Aborting workflow."
+            echo "::error::Policy already exists. Aborting workflow."
             exit 1
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -43,6 +43,13 @@ jobs:
           API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
           POLICY_NAME: ${{ github.event.inputs.POLICY_NAME }}
           API_URL: ${{ env.API_URL }}
+          
+      - name: Job Summary
+        run: |
+          echo "## Policy Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy Name**: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Exists**: No" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status**: Ready to proceed with creation" >> $GITHUB_STEP_SUMMARY
 
   check-ruleset:
     name: Check if Ruleset Exists
@@ -76,6 +83,20 @@ jobs:
           API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
           RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
           API_URL: ${{ env.API_URL }}
+      
+      - name: Job Summary
+        run: |
+          echo "## Ruleset Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset Name**: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.check-ruleset.outputs.exists }}" == "true" ]]; then
+            echo "* **Exists**: Yes" >> $GITHUB_STEP_SUMMARY
+            echo "* **Ruleset ID**: ${{ steps.check-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: Using existing ruleset" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "* **Exists**: No" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: Will create new ruleset" >> $GITHUB_STEP_SUMMARY
+          fi
 
   create-ruleset:
     name: Create Ruleset
@@ -108,6 +129,29 @@ jobs:
           API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
           RULESET_NAME: ${{ github.event.inputs.RULESET_NAME }}
           API_URL: ${{ env.API_URL }}
+      
+      - name: Save ruleset file as artifact
+        run: |
+          # Create a copy of the ruleset JSON file with actual name
+          mkdir -p artifacts
+          cp trendmicro/runtimeruleset.json "artifacts/${{ github.event.inputs.RULESET_NAME }}.json"
+          # Add the ruleset ID to the file for reference
+          echo "# Ruleset ID: ${{ steps.create-ruleset.outputs.ruleset_id }}" > "artifacts/${{ github.event.inputs.RULESET_NAME }}.id.txt"
+      
+      - name: Upload ruleset artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ruleset-files
+          path: artifacts/
+          retention-days: 7
+      
+      - name: Job Summary
+        run: |
+          echo "## Ruleset Creation Results" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset Name**: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset ID**: ${{ steps.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status**: Successfully created" >> $GITHUB_STEP_SUMMARY
+          echo "* **Artifact**: The ruleset file has been saved as a workflow artifact" >> $GITHUB_STEP_SUMMARY
 
   create-policy:
     name: Create Policy
@@ -133,18 +177,30 @@ jobs:
       - name: Prepare policy file
         run: |
           echo "Preparing policy file with ruleset ID: ${{ env.ruleset_id }}"
+          mkdir -p artifacts
+          
           # Create a temporary policy file with the updated ruleset ID
           cat trendmicro/policy.json | sed -e 's/"id": "DemoLogOnlyRuleset-[^"]*"/"id": "${{ env.ruleset_id }}"/' > trendmicro/policy_updated.json
+          
+          # Also create a copy for artifacts
+          cp trendmicro/policy_updated.json "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
+          
           cat trendmicro/policy_updated.json
           echo "POLICY_FILE=trendmicro/policy_updated.json" >> $GITHUB_ENV
       
       - name: Create Policy
+        id: create-policy
         run: |
           echo "Creating policy '${{ github.event.inputs.POLICY_NAME }}' with ruleset ID: ${{ env.ruleset_id }}"
           output=$(python trendmicro/scripts/create_policy.py || echo "Create policy failed with exit code $?")
           echo "$output"
           if echo "$output" | grep -q "created successfully"; then
             echo "✅ Policy created successfully"
+            if echo "$output" | grep -q "policy_id="; then
+              policy_id=$(echo "$output" | grep -o "policy_id=.*" | cut -d= -f2)
+              echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+              echo "# Policy ID: $policy_id" > "artifacts/${{ github.event.inputs.POLICY_NAME }}.id.txt"
+            fi
           else
             echo "❌ Failed to create policy"
             exit 1
@@ -156,6 +212,26 @@ jobs:
           RULESET_ID: ${{ env.ruleset_id }}
           API_URL: ${{ env.API_URL }}
           POLICY_FILE: ${{ env.POLICY_FILE }}
+      
+      - name: Upload policy artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: policy-files
+          path: artifacts/
+          retention-days: 7
+      
+      - name: Job Summary
+        run: |
+          echo "## Policy Creation Results" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy Name**: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset ID Used**: ${{ env.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ -n "${{ steps.create-policy.outputs.policy_id }}" ]]; then
+            echo "* **Policy ID**: ${{ steps.create-policy.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "* **Status**: Successfully created" >> $GITHUB_STEP_SUMMARY
+          echo "* **Artifact**: The policy file has been saved as a workflow artifact" >> $GITHUB_STEP_SUMMARY
 
   cleanup-ruleset:
     name: Delete Ruleset on Policy Creation Failure
@@ -176,3 +252,53 @@ jobs:
           API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
           RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id }}
           API_URL: ${{ env.API_URL }}
+      
+      - name: Job Summary
+        run: |
+          echo "## Cleanup Results" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset ID**: ${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status**: Ruleset deleted due to policy creation failure" >> $GITHUB_STEP_SUMMARY
+          echo "* **Reason**: The policy creation job failed, so the newly created ruleset was deleted to avoid orphaned resources" >> $GITHUB_STEP_SUMMARY
+  
+  workflow-summary:
+    name: Generate Workflow Summary
+    runs-on: ubuntu-latest
+    needs: [check-policy, check-ruleset, create-ruleset, create-policy]
+    if: always() && !failure()
+    steps:
+      - name: Final Workflow Summary
+        run: |
+          echo "# Vision One Container Security Policy Creation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Overview" >> $GITHUB_STEP_SUMMARY
+          echo "* **Ruleset Name**: ${{ github.event.inputs.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy Name**: ${{ github.event.inputs.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.check-policy.result }}" == "success" ]]; then
+            echo "## Workflow Status" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ "${{ needs.check-ruleset.outputs.ruleset_exists }}" == "true" ]]; then
+              echo "* **Ruleset**: Used existing ruleset with ID ${{ needs.check-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.create-ruleset.result }}" == "success" ]]; then
+              echo "* **Ruleset**: Created new ruleset with ID ${{ needs.create-ruleset.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ "${{ needs.create-policy.result }}" == "success" ]]; then
+              echo "* **Policy**: Successfully created" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **SUCCESS**: The workflow has completed successfully." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "* **Policy**: Failed to create" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "❌ **FAILED**: Policy creation failed. Check logs for details." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "## Workflow Status" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **STOPPED**: The policy check failed or was aborted." >> $GITHUB_STEP_SUMMARY
+            echo "Most likely the policy already exists with the same name." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "* The ruleset and policy files are available as workflow artifacts" >> $GITHUB_STEP_SUMMARY

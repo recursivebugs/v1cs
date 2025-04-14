@@ -8,8 +8,7 @@ ruleset_id = os.getenv("RULESET_ID")
 url = f"https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets/{ruleset_id}"
 headers = {
     "Authorization": f"Bearer {api_key}",
-    "Accept": "application/json",
-    "api-version": "v1"
+    "Accept": "application/json"
 }
 
 try:

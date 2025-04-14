@@ -1,12 +1,8 @@
-#!/usr/bin/env bash
-set +e
-output=$(python trendmicro/scripts/delete_ruleset.py)
-status=$?
-echo "$output"
+#!/bin/bash
+set -e
 
-if [ "$status" -eq 0 ]; then
-  echo "✅ Ruleset deleted successfully."
-else
-  echo "🔥 Failed to delete ruleset."
-fi
-exit $status
+echo "🧹 Cleaning up Ruleset ID '${RULESET_ID}'..."
+
+curl -s -X DELETE "${API_URL}/managedRules/${RULESET_ID}" -H "Authorization: Bearer ${API_KEY}" -H "accept: application/json"
+
+echo "✅ Ruleset deleted successfully."

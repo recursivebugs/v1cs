@@ -1,13 +1,12 @@
-#!/usr/bin/env bash
-set +e
-output=$(python trendmicro/scripts/create_ruleset.py)
-status=$?
-echo "$output"
+#!/bin/bash
+set -e
 
-if [ "$status" -eq 0 ]; then
-  ruleset_id=$(echo "$output" | grep 'id=' | awk -F'=' '{print $2}' | xargs)
-  echo "ruleset_id=$ruleset_id" >> $GITHUB_OUTPUT
-else
-  echo "🔥 Failed to create ruleset."
-fi
-exit $status
+echo "🚀 Creating Ruleset '$RULESET_NAME'..."
+
+payload=$(jq --arg name "$RULESET_NAME" '.name = $name' trendmicro/payloads/ruleset.json)
+
+resp=$(curl -s -X POST "$API_URL/managedRules" -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" -H "Content-Type: application/json" -d "$payload")
+
+RULESET_ID=$(echo "$resp" | jq -r '.id')
+
+echo "✅ Created Ruleset with ID: $RULESET_ID"

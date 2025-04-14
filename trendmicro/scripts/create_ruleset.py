@@ -5,6 +5,7 @@ import sys
 
 api_key = os.getenv("API_KEY")
 ruleset_name = os.getenv("RULESET_NAME")
+api_url = os.getenv("API_URL", "https://api.xdr.trendmicro.com/beta/containerSecurity")
 ruleset_path = "trendmicro/runtimeruleset.json"
 
 headers = {
@@ -13,9 +14,12 @@ headers = {
     "Content-Type": "application/json"
 }
 
-ruleset_url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
+ruleset_url = f"{api_url}/rulesets"
 
 try:
+    print(f"Creating ruleset '{ruleset_name}'...")
+    print(f"API URL: {ruleset_url}")
+    
     with open(ruleset_path) as f:
         data = json.load(f)
 
@@ -26,16 +30,20 @@ try:
 
     res = requests.post(ruleset_url, headers=headers, json=data)
     print(f"HTTP status code: {res.status_code}")
+    print(f"Response: {res.text}")
 
     ruleset_id = ""
 
     if res.status_code == 201:
         try:
-            ruleset_id = res.json().get("id", "")
+            response_json = res.json()
+            ruleset_id = response_json.get("id", "")
+            print(f"Ruleset ID from response: {ruleset_id}")
         except Exception:
             print("⚠️ No JSON body found, trying Location header...")
             location = res.headers.get("Location", "")
             ruleset_id = location.split("/")[-1] if location else "unknown"
+            print(f"Ruleset ID from location header: {ruleset_id}")
 
         print(f"id={ruleset_id}")
         print("✅ Ruleset created successfully.")

@@ -36,8 +36,22 @@ jobs:
           pip install requests
 
       - name: Check if Policy Exists
+        id: check-policy
         run: |
+          set +e
           python trendmicro/scripts/check_policy.py
+          status=$?
+          echo "Script exited with code $status"
+          if [ "$status" -eq 1 ]; then
+            echo "❌ Policy already exists. Aborting."
+            exit 1
+          elif [ "$status" -eq 2 ]; then
+            echo "✅ Policy does not exist. Proceeding."
+            exit 0
+          else
+            echo "🔥 Unknown error occurred while checking policy."
+            exit $status
+          fi
 
   check-ruleset:
     runs-on: ubuntu-latest
@@ -62,14 +76,20 @@ jobs:
       - name: Check if Ruleset Exists
         id: ruleset-check
         run: |
+          set +e
           output=$(python trendmicro/scripts/check_ruleset.py)
+          status=$?
           echo "$output"
-          if echo "$output" | grep -q "exists=true"; then
+          echo "Script exited with code $status"
+          if [ "$status" -eq 0 ]; then
             id=$(echo "$output" | awk -F'id=' '{print $2}')
             echo "exists=true" >> $GITHUB_OUTPUT
             echo "ruleset_id=$id" >> $GITHUB_OUTPUT
-          else
+          elif [ "$status" -eq 2 ]; then
             echo "exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "🔥 Unknown error occurred while checking ruleset."
+            exit $status
           fi
 
   create-ruleset:
@@ -95,8 +115,18 @@ jobs:
       - name: Create Ruleset
         id: ruleset-create
         run: |
-          id=$(python trendmicro/scripts/create_ruleset.py | awk -F'=' '{print $2}')
-          echo "ruleset_id=$id" >> $GITHUB_OUTPUT
+          set +e
+          output=$(python trendmicro/scripts/create_ruleset.py)
+          status=$?
+          echo "$output"
+          echo "Script exited with code $status"
+          if [ "$status" -eq 0 ]; then
+            id=$(echo "$output" | awk -F'=' '{print $2}')
+            echo "ruleset_id=$id" >> $GITHUB_OUTPUT
+          else
+            echo "🔥 Failed to create ruleset."
+            exit $status
+          fi
 
   create-policy:
     runs-on: ubuntu-latest

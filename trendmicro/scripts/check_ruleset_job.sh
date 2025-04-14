@@ -1,16 +1,26 @@
 #!/bin/bash
 set -e
 
-echo "🔍 Checking if ruleset '$RULESET_NAME' exists..."
+echo "🔧 DEBUG INFO:"
+echo " - API_URL: ${API_URL}"
+echo " - RULESET_NAME: ${RULESET_NAME}"
+echo " - API_KEY length: ${#API_KEY}"
 
-resp=$(curl -s -X GET "$API_URL/managedRules" -H "Authorization: Bearer $API_KEY" -H "Accept: application/json")
+echo "🔍 Checking if ruleset '${RULESET_NAME}' exists..."
 
-RULESET_ID=$(echo "$resp" | jq -r --arg name "$RULESET_NAME" '.items[]? | select(.name == $name) | .id')
+response=$(curl -s -H "Authorization: Bearer ${API_KEY}" "${API_URL}/managedRules?top=100")
 
-if [ -n "$RULESET_ID" ] && [ "$RULESET_ID" != "null" ]; then
-  echo "✅ Ruleset exists."
-  EXISTS=true
+if echo "$response" | jq -e --arg name "$RULESET_NAME" '.items[] | select(.name == $name)' > /dev/null; then
+  ruleset_id=$(echo "$response" | jq -r --arg name "$RULESET_NAME" '.items[] | select(.name == $name) | .id')
+  echo "✅ Ruleset found: ${ruleset_id}"
+  exists=true
 else
   echo "❌ Ruleset does not exist."
-  EXISTS=false
+  exists=false
+fi
+
+echo "exists=$exists" >> $GITHUB_OUTPUT
+
+if [ "$exists" = "true" ]; then
+  echo "ruleset_id=${ruleset_id}" >> $GITHUB_OUTPUT
 fi

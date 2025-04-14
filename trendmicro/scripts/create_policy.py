@@ -18,7 +18,6 @@ ruleset_url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
 policy_url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
 
 try:
-    # Step 1: Find Ruleset ID by name
     res = requests.get(ruleset_url, headers=headers)
     res.raise_for_status()
     rulesets = res.json().get("items", [])
@@ -35,28 +34,26 @@ try:
 
     print(f"✅ Found ruleset ID: {ruleset_id}")
 
-    # Step 2: Load and patch original policy.json (non-destructively)
     with open(policy_path) as f:
         data = json.load(f)
 
     data["name"] = policy_name
-
-    # Update runtime.rulesetids[0].id
     if "runtime" in data and "rulesetids" in data["runtime"] and len(data["runtime"]["rulesetids"]) > 0:
         data["runtime"]["rulesetids"][0]["id"] = ruleset_id
     else:
-        print("[ERROR] policy.json missing expected 'runtime.rulesetids[0]' structure.")
+        print("[ERROR] Missing 'runtime.rulesetids[0]' structure in policy.json")
         sys.exit(1)
 
-    print("📦 Final payload to be sent:")
+    print("📦 Final Payload:")
     print(json.dumps(data, indent=2))
 
-    # Step 3: Create Policy
     res = requests.post(policy_url, headers=headers, json=data)
     print(f"HTTP status code: {res.status_code}")
     print(f"Response: {res.text}")
 
     if res.status_code == 201:
+        policy_id = res.json().get("id", "unknown")
+        print(f"policy_id={policy_id}")
         print("✅ Policy created successfully.")
         sys.exit(0)
     else:

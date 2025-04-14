@@ -14,12 +14,17 @@ headers = {
 try:
     res = requests.get(url, headers=headers)
     res.raise_for_status()
+
     for item in res.json().get("items", []):
         if item.get("name") == policy_name:
+            policy_id = item.get("id", "")
             print(f"Policy '{policy_name}' already exists.")
-            sys.exit(1)
+            print(f"id={policy_id}")
+            sys.exit(0)
+
     print(f"Policy '{policy_name}' not found.")
     sys.exit(2)
+
 except Exception as e:
     print(f"[ERROR] Failed to check policy: {e}")
     sys.exit(1)

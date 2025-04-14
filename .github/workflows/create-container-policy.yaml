@@ -118,3 +118,22 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Policy Name: ${{ inputs.policy_name }}" >> $GITHUB_STEP_SUMMARY
           echo "Policy ID: ${{ steps.create.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
+
+
+  delete-ruleset:
+    needs: [create-policy, create-ruleset]
+    if: |
+      always() &&
+      needs.create-policy.result == 'failure' &&
+      needs.create-ruleset.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Delete Ruleset
+        env:
+          API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
+          API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
+          RULESET_ID: ${{ needs.create-ruleset.outputs.ruleset_id }}
+        run: bash trendmicro/scripts/delete_ruleset_job.sh

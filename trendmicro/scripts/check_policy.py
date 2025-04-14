@@ -14,8 +14,7 @@ headers = {
 try:
     res = requests.get(url, headers=headers)
     res.raise_for_status()
-    items = res.json().get("items", [])
-    for item in items:
+    for item in res.json().get("items", []):
         if item.get("name") == policy_name:
             print(f"Policy '{policy_name}' already exists.")
             sys.exit(1)

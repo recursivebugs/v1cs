@@ -21,10 +21,24 @@ try:
     data["name"] = ruleset_name
 
     res = requests.post(url, headers=headers, json=data)
-    res.raise_for_status()
-    ruleset_id = res.json()["id"]
+
+    print(f"HTTP status code: {res.status_code}")
+    print(f"Response text: {res.text}")
+
+    if res.status_code != 201:
+        print(f"[ERROR] Failed to create ruleset: {res.status_code} {res.text}")
+        sys.exit(1)
+
+    json_data = res.json()
+    ruleset_id = json_data.get("id")
+
+    if not ruleset_id:
+        print("[ERROR] Ruleset created but ID not found in response.")
+        sys.exit(1)
+
     print(f"ruleset_id={ruleset_id}")
     sys.exit(0)
+
 except Exception as e:
-    print(f"[ERROR] Failed to create ruleset: {e}")
+    print(f"[ERROR] Exception during ruleset creation: {e}")
     sys.exit(1)

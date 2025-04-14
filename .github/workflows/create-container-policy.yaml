@@ -21,8 +21,10 @@ env:
 jobs:
   check-policy:
     runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -31,36 +33,40 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+        run: pip install requests
 
       - name: Check if Policy Exists
-        id: check-policy
+        id: check
         run: |
           set +e
           python trendmicro/scripts/check_policy.py
           status=$?
           echo "Script exited with code $status"
           if [ "$status" -eq 1 ]; then
-            echo "❌ Policy already exists. Aborting."
+            echo "exists=true" >> $GITHUB_OUTPUT
             exit 1
           elif [ "$status" -eq 2 ]; then
-            echo "✅ Policy does not exist. Proceeding."
+            echo "exists=false" >> $GITHUB_OUTPUT
             exit 0
           else
-            echo "🔥 Unknown error occurred while checking policy."
+            echo "🔥 Unknown error."
             exit $status
           fi
+
+      - name: Summary - Check Policy
+        run: |
+          echo "## Check Policy Job" >> $GITHUB_STEP_SUMMARY
+          echo "- Policy Name: ${{ env.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
 
   check-ruleset:
     runs-on: ubuntu-latest
     needs: check-policy
     outputs:
-      exists: ${{ steps.ruleset-check.outputs.exists }}
-      ruleset_id: ${{ steps.ruleset-check.outputs.ruleset_id }}
+      exists: ${{ steps.check.outputs.exists }}
+      ruleset_id: ${{ steps.check.outputs.ruleset_id }}
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -69,18 +75,15 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+        run: pip install requests
 
-      - name: Check if Ruleset Exists
-        id: ruleset-check
+      - name: Check Ruleset
+        id: check
         run: |
           set +e
           output=$(python trendmicro/scripts/check_ruleset.py)
           status=$?
           echo "$output"
-          echo "Script exited with code $status"
           if [ "$status" -eq 0 ]; then
             id=$(echo "$output" | awk -F'id=' '{print $2}')
             echo "exists=true" >> $GITHUB_OUTPUT
@@ -88,51 +91,21 @@ jobs:
           elif [ "$status" -eq 2 ]; then
             echo "exists=false" >> $GITHUB_OUTPUT
           else
-            echo "🔥 Unknown error occurred while checking ruleset."
             exit $status
           fi
 
-  create-ruleset:
-    runs-on: ubuntu-latest
-    needs: check-ruleset
-    if: needs.check-ruleset.outputs.exists == 'false'
-    outputs:
-      ruleset_id: ${{ steps.ruleset-create.outputs.ruleset_id }}
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install dependencies
+      - name: Summary - Check Ruleset
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Create Ruleset
-        id: ruleset-create
-        run: |
-          set +e
-          output=$(python trendmicro/scripts/create_ruleset.py 2>&1)
-          status=$?
-          echo "$output"
-          echo "Script exited with code $status"
-          if [ "$status" -eq 0 ]; then
-            id=$(echo "$output" | grep 'ruleset_id=' | awk -F'=' '{print $2}')
-            echo "ruleset_id=$id" >> $GITHUB_OUTPUT
-          else
-            echo "🔥 Failed to create ruleset."
-            exit $status
-          fi
+          echo "## Check Ruleset Job" >> $GITHUB_STEP_SUMMARY
+          echo "- Ruleset Name: ${{ env.RULESET_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Ruleset ID: ${{ steps.check.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
   create-policy:
     runs-on: ubuntu-latest
-    needs: check-ruleset  # only depends on check-ruleset now
+    needs: check-ruleset
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Setup Python
@@ -141,38 +114,23 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Determine Ruleset ID
-        id: ruleset-id
-        run: |
-          id="${{ needs.check-ruleset.outputs.ruleset_id }}"
-          echo "RULESET_ID=$id" >> $GITHUB_ENV
+        run: pip install requests
 
       - name: Create Policy
+        id: policy
         run: |
-          python trendmicro/scripts/create_policy.py
+          set +e
+          output=$(python trendmicro/scripts/create_policy.py 2>&1)
+          status=$?
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            policy_id=$(echo "$output" | grep 'policy_id=' | awk -F'=' '{print $2}')
+            echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
+          fi
+          exit $status
 
-  cleanup-ruleset:
-    runs-on: ubuntu-latest
-    needs: [create-policy, create-ruleset]
-    if: failure() && needs.create-ruleset.result == 'success'
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install dependencies
+      - name: Summary - Create Policy
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
-      - name: Delete Ruleset
-        run: |
-          python trendmicro/scripts/delete_ruleset.py
+          echo "## Create Policy Job" >> $GITHUB_STEP_SUMMARY
+          echo "- Policy Name: ${{ env.POLICY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Policy ID: ${{ steps.policy.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY

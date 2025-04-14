@@ -1,17 +1,26 @@
-#!/usr/bin/env bash
-set +e
-output=$(python trendmicro/scripts/check_policy.py)
-status=$?
-echo "$output"
+#!/bin/bash
+set -e
 
-if [ "$status" -eq 0 ]; then
-  id=$(echo "$output" | awk -F'id=' '{print $2}' | xargs)
-  echo "exists=true" >> $GITHUB_OUTPUT
-  echo "policy_id=$id" >> $GITHUB_OUTPUT
-elif [ "$status" -eq 2 ]; then
-  echo "exists=false" >> $GITHUB_OUTPUT
-else
-  echo "🔥 Failed to check policy."
-  exit $status
-fi
-exit 0
+echo "Checking if policy '${POLICY_NAME}' exists..."
+
+response=$(curl -s -X GET "${API_URL}/policies" \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "Accept: application/json")
+
+exists="false"
+for name in $(echo "$response" | jq -r '.items[].name'); do
+  if [[ "$name" == "$POLICY_NAME" ]]; then
+    exists="true"
+    break
+  fi
+done
+
+echo "Policy exists? ${exists}"
+
+# Export variable to GitHub Actions outputs
+echo "exists=${exists}" >> $GITHUB_OUTPUT
+
+echo "### Check Policy Job" >> $GITHUB_STEP_SUMMARY
+echo "" >> $GITHUB_STEP_SUMMARY
+echo "Policy Name: ${POLICY_NAME}" >> $GITHUB_STEP_SUMMARY
+echo "Exists: ${exists}" >> $GITHUB_STEP_SUMMARY

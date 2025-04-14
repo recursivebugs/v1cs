@@ -17,7 +17,7 @@ try:
         print(f"Ruleset {ruleset_id} deleted.")
         sys.exit(0)
     else:
-        print(f"[ERROR] Failed to delete ruleset: {res.status_code}")
+        print(f"[ERROR] Failed to delete ruleset: {res.status_code} {res.text}")
         sys.exit(1)
 except Exception as e:
     print(f"[ERROR] Exception during deletion: {e}")

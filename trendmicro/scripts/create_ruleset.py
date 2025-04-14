@@ -27,11 +27,14 @@ try:
     res = requests.post(ruleset_url, headers=headers, json=data)
     print(f"HTTP status code: {res.status_code}")
 
+    ruleset_id = ""
+
     if res.status_code == 201:
         try:
+            # Try getting from JSON body
             ruleset_id = res.json().get("id", "")
         except Exception:
-            # fallback if no JSON body
+            print("⚠️ No JSON body found, trying Location header...")
             location = res.headers.get("Location", "")
             ruleset_id = location.split("/")[-1] if location else "unknown"
 

@@ -14,7 +14,7 @@ on:
 
 env:
   API_URL: https://api.xdr.trendmicro.com/beta/containerSecurity
-  API_KEY: ${{ secrets.V1_API_KEY }}
+  API_KEY: ${{ secrets.CONTAINER_SECURITY_API_KEY }}
   RULESET_NAME: ${{ github.event.inputs.ruleset_name }}
   POLICY_NAME: ${{ github.event.inputs.policy_name }}
 
@@ -82,7 +82,7 @@ jobs:
           if [ "$id" == "" ]; then
             id=${{ needs.create-ruleset.outputs.ruleset_id }}
           fi
-          echo "ruleset_id=$id" >> $GITHUB_ENV
+          echo "RULESET_ID=$id" >> $GITHUB_ENV
 
       - name: Create Policy
         run: |

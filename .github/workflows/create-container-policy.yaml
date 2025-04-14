@@ -38,7 +38,6 @@ jobs:
           echo "Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
           echo "Policy ID: ${{ steps.check.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
 
-
   check-ruleset:
     needs: check-policy
     if: needs.check-policy.outputs.exists == 'false'
@@ -66,7 +65,6 @@ jobs:
           echo "Exists: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
           echo "Ruleset ID: ${{ steps.check.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
-
   create-ruleset:
     needs: check-ruleset
     if: needs.check-ruleset.outputs.exists == 'false'
@@ -92,9 +90,8 @@ jobs:
           echo "Ruleset Name: ${{ inputs.ruleset_name }}" >> $GITHUB_STEP_SUMMARY
           echo "Ruleset ID: ${{ steps.create.outputs.ruleset_id }}" >> $GITHUB_STEP_SUMMARY
 
-
   create-policy:
-    needs: [check-policy, check-ruleset, create-ruleset]
+    needs: [check-policy, check-ruleset]
     if: needs.check-policy.outputs.exists == 'false'
     runs-on: ubuntu-latest
     outputs:
@@ -118,7 +115,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Policy Name: ${{ inputs.policy_name }}" >> $GITHUB_STEP_SUMMARY
           echo "Policy ID: ${{ steps.create.outputs.policy_id }}" >> $GITHUB_STEP_SUMMARY
-
 
   delete-ruleset:
     needs: [create-policy, create-ruleset]

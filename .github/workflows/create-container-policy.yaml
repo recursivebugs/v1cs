@@ -22,8 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install Python requirements
-        run: pip install requests
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          pip install requests
       
       - name: Check Policy
         id: check-policy
@@ -61,8 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install Python requirements
-        run: pip install requests
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          pip install requests
       
       - name: Check Ruleset
         id: check-ruleset
@@ -108,8 +114,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install Python requirements
-        run: pip install requests
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          pip install requests
       
       - name: Create Ruleset
         id: create-ruleset
@@ -132,11 +141,23 @@ jobs:
       
       - name: Save ruleset file as artifact
         run: |
-          # Create a copy of the ruleset JSON file with actual name
+          # Create a directory for artifacts
           mkdir -p artifacts
+          
+          # Copy the ruleset JSON file with actual name
           cp trendmicro/runtimeruleset.json "artifacts/${{ github.event.inputs.RULESET_NAME }}.json"
-          # Add the ruleset ID to the file for reference
-          echo "# Ruleset ID: ${{ steps.create-ruleset.outputs.ruleset_id }}" > "artifacts/${{ github.event.inputs.RULESET_NAME }}.id.txt"
+          
+          # Add the ruleset ID to a separate file for reference
+          echo "${{ steps.create-ruleset.outputs.ruleset_id }}" > "artifacts/${{ github.event.inputs.RULESET_NAME }}.id"
+          
+          # Also create a file that combines the ruleset and its ID for easier reference
+          echo "Ruleset ID: ${{ steps.create-ruleset.outputs.ruleset_id }}" > "artifacts/${{ github.event.inputs.RULESET_NAME }}_info.txt"
+          echo "" >> "artifacts/${{ github.event.inputs.RULESET_NAME }}_info.txt"
+          echo "Ruleset JSON:" >> "artifacts/${{ github.event.inputs.RULESET_NAME }}_info.txt"
+          cat trendmicro/runtimeruleset.json >> "artifacts/${{ github.event.inputs.RULESET_NAME }}_info.txt"
+          
+          # List the files to verify they exist
+          ls -la artifacts/
       
       - name: Upload ruleset artifact
         uses: actions/upload-artifact@v4
@@ -160,8 +181,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install Python requirements
-        run: pip install requests
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          pip install requests
       
       - name: Determine Ruleset ID
         id: get-ruleset-id
@@ -180,13 +204,18 @@ jobs:
           mkdir -p artifacts
           
           # Create a temporary policy file with the updated ruleset ID
-          cat trendmicro/policy.json | sed -e 's/"id": "DemoLogOnlyRuleset-[^"]*"/"id": "${{ env.ruleset_id }}"/' > trendmicro/policy_updated.json
+          jq --arg rid "${{ env.ruleset_id }}" '.runtime.rulesetids[0].id = $rid' trendmicro/policy.json > "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
           
-          # Also create a copy for artifacts
-          cp trendmicro/policy_updated.json "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
+          # Display the updated policy content
+          cat "artifacts/${{ github.event.inputs.POLICY_NAME }}.json"
           
-          cat trendmicro/policy_updated.json
+          # Also create a copy for the build process
+          cp "artifacts/${{ github.event.inputs.POLICY_NAME }}.json" trendmicro/policy_updated.json
+          
           echo "POLICY_FILE=trendmicro/policy_updated.json" >> $GITHUB_ENV
+          
+          # List the files to verify they exist
+          ls -la artifacts/
       
       - name: Create Policy
         id: create-policy
@@ -199,7 +228,19 @@ jobs:
             if echo "$output" | grep -q "policy_id="; then
               policy_id=$(echo "$output" | grep -o "policy_id=.*" | cut -d= -f2)
               echo "policy_id=$policy_id" >> $GITHUB_OUTPUT
-              echo "# Policy ID: $policy_id" > "artifacts/${{ github.event.inputs.POLICY_NAME }}.id.txt"
+              
+              # Save policy ID to a file
+              echo "$policy_id" > "artifacts/${{ github.event.inputs.POLICY_NAME }}.id"
+              
+              # Create an info file that combines the policy and its ID
+              echo "Policy ID: $policy_id" > "artifacts/${{ github.event.inputs.POLICY_NAME }}_info.txt"
+              echo "Ruleset ID: ${{ env.ruleset_id }}" >> "artifacts/${{ github.event.inputs.POLICY_NAME }}_info.txt"
+              echo "" >> "artifacts/${{ github.event.inputs.POLICY_NAME }}_info.txt"
+              echo "Policy JSON:" >> "artifacts/${{ github.event.inputs.POLICY_NAME }}_info.txt"
+              cat "artifacts/${{ github.event.inputs.POLICY_NAME }}.json" >> "artifacts/${{ github.event.inputs.POLICY_NAME }}_info.txt"
+              
+              # List files to verify they exist
+              ls -la artifacts/
             fi
           else
             echo "❌ Failed to create policy"
@@ -241,7 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install Python requirements
+      - name: Install required packages
         run: pip install requests
       
       - name: Delete Ruleset

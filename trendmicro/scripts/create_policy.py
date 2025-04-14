@@ -4,10 +4,10 @@ import os
 import json
 
 api_key = os.getenv("API_KEY")
-ruleset_id = os.getenv("RULESET_ID")
-policy_path = "trendmicro/policy.json"
+ruleset_name = os.getenv("RULESET_NAME")
+ruleset_path = "trendmicro/runtimeruleset.json"
 
-url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
+url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
 headers = {
     "Authorization": f"Bearer {api_key}",
     "Accept": "application/json",
@@ -15,22 +15,16 @@ headers = {
 }
 
 try:
-    with open(policy_path) as f:
-        policy = json.load(f)
+    with open(ruleset_path) as f:
+        data = json.load(f)
 
-    if "rulesets" in policy:
-        policy["rulesets"][0]["id"] = ruleset_id
-    else:
-        policy["rulesets"] = [{"id": ruleset_id}]
+    data["name"] = ruleset_name
 
-    res = requests.post(url, headers=headers, json=policy)
-    if res.status_code == 201:
-        print("Policy created successfully.")
-        sys.exit(0)
-    else:
-        print(f"[ERROR] Failed to create policy: {res.status_code} {res.text}")
-        sys.exit(1)
-
+    res = requests.post(url, headers=headers, json=data)
+    res.raise_for_status()
+    ruleset_id = res.json()["id"]
+    print(f"ruleset_id={ruleset_id}")
+    sys.exit(0)
 except Exception as e:
-    print(f"[ERROR] Failed to create policy: {e}")
+    print(f"[ERROR] Failed to create ruleset: {e}")
     sys.exit(1)

@@ -4,9 +4,10 @@ import os
 import json
 
 api_key = os.getenv("API_KEY")
-ruleset_name = os.getenv("RULESET_NAME")
+ruleset_id = os.getenv("RULESET_ID")
 policy_name = os.getenv("POLICY_NAME")
-policy_path = "trendmicro/policy.json"
+api_url = os.getenv("API_URL", "https://api.xdr.trendmicro.com/beta/containerSecurity")
+policy_file = os.getenv("POLICY_FILE", "trendmicro/policy.json")
 
 headers = {
     "Authorization": f"Bearer {api_key}",
@@ -14,37 +15,30 @@ headers = {
     "Content-Type": "application/json"
 }
 
-ruleset_url = "https://api.xdr.trendmicro.com/beta/containerSecurity/rulesets"
-policy_url = "https://api.xdr.trendmicro.com/beta/containerSecurity/policies"
+policy_url = f"{api_url}/policies"
 
 try:
-    res = requests.get(ruleset_url, headers=headers)
-    res.raise_for_status()
-    rulesets = res.json().get("items", [])
-
-    ruleset_id = None
-    for r in rulesets:
-        if r.get("name") == ruleset_name:
-            ruleset_id = r.get("id")
-            break
-
-    if not ruleset_id:
-        print(f"[ERROR] Ruleset with name '{ruleset_name}' not found.")
-        sys.exit(1)
-
-    print(f"✅ Found ruleset ID: {ruleset_id}")
-
-    with open(policy_path) as f:
+    print(f"Creating policy '{policy_name}' with ruleset ID '{ruleset_id}'...")
+    print(f"API URL: {policy_url}")
+    print(f"Policy file: {policy_file}")
+    
+    with open(policy_file) as f:
         data = json.load(f)
 
     data["name"] = policy_name
+    
+    # Update the ruleset ID in the policy
     if "runtime" in data and "rulesetids" in data["runtime"] and len(data["runtime"]["rulesetids"]) > 0:
-        data["runtime"]["rulesetids"][0]["id"] = ruleset_id
+        if isinstance(data["runtime"]["rulesetids"][0], dict):
+            data["runtime"]["rulesetids"][0]["id"] = ruleset_id
+        else:
+            # Handle the case where rulesetids is a list of strings
+            data["runtime"]["rulesetids"][0] = ruleset_id
     else:
-        print("[ERROR] Missing 'runtime.rulesetids[0]' structure in policy.json")
-        sys.exit(1)
+        print("[WARNING] Could not find runtime.rulesetids in policy structure")
+        data["runtime"] = {"rulesetids": [{"name": os.getenv("RULESET_NAME"), "id": ruleset_id}]}
 
-    print("📦 Final Payload:")
+    print("📦 Creating Policy with payload:")
     print(json.dumps(data, indent=2))
 
     res = requests.post(policy_url, headers=headers, json=data)
@@ -52,8 +46,12 @@ try:
     print(f"Response: {res.text}")
 
     if res.status_code == 201:
-        policy_id = res.json().get("id", "unknown")
-        print(f"policy_id={policy_id}")
+        try:
+            policy_id = res.json().get("id", "unknown")
+            print(f"policy_id={policy_id}")
+        except Exception:
+            print("⚠️ No JSON body in response")
+            
         print("✅ Policy created successfully.")
         sys.exit(0)
     else:

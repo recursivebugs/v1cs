@@ -1,6 +1,6 @@
-# AWS EKS Cluster Management with GitHub Actions
+# Vision One Container Security for AWS EKS
 
-This repository contains GitHub Actions workflows for creating, deploying to, and deleting AWS EKS (Elastic Kubernetes Service) clusters, as well as deploying and managing Trend Micro Vision One Container Security.
+This repository contains GitHub Actions workflows for managing AWS EKS (Elastic Kubernetes Service) clusters and deploying Trend Micro Vision One Container Security.
 
 ## Workflows
 
@@ -28,15 +28,10 @@ Safely deletes an existing AWS EKS cluster.
 - AWS Region
 - Confirmation (type "DELETE" to confirm)
 
-### 3. Deploy to EKS
-Builds, scans, and deploys a Docker image to the EKS cluster.
-
-**Workflow file:** `.github/workflows/deploy-to-eks.yml`
-
-### 4. Deploy Vision One Container Security to EKS
+### 3. Deploy Vision One Container Security
 Deploys Trend Micro Vision One Container Security solution to an existing EKS cluster.
 
-**Workflow file:** `.github/workflows/deploy-v1cs-to-eks.yml`
+**Workflow file:** `.github/workflows/deploy-v1cs-to-eks-split.yml`
 
 **Parameters:**
 - Vision One Container Security Policy ID
@@ -45,7 +40,7 @@ Deploys Trend Micro Vision One Container Security solution to an existing EKS cl
 - AWS Region
 - Namespaces to exclude (comma-separated)
 
-### 5. Create Vision One Container Security Policy
+### 4. Create Vision One Container Security Policy
 Creates a new Vision One Container Security policy and associated ruleset.
 
 **Workflow file:** `.github/workflows/create-v1cs-policy.yml`
@@ -54,7 +49,7 @@ Creates a new Vision One Container Security policy and associated ruleset.
 - Ruleset Name
 - Policy Name
 
-### 6. Uninstall Vision One Container Security from EKS
+### 5. Uninstall Vision One Container Security
 Removes Vision One Container Security from an EKS cluster and deregisters it from Vision One.
 
 **Workflow file:** `.github/workflows/uninstall-v1cs-from-eks.yml`
@@ -75,7 +70,6 @@ Removes Vision One Container Security from an EKS cluster and deregisters it fro
    - Create/manage EKS clusters
    - Create/manage EC2 resources
    - Read EC2 key pairs (no create permission needed)
-   - Push to ECR repositories
 
 2. **SSH Key Pair**: Create an SSH key pair with your desired name in your target AWS region before running the cluster creation workflow
 
@@ -94,12 +88,9 @@ Removes Vision One Container Security from an EKS cluster and deregisters it fro
 │   └── workflows
 │       ├── create-eks-cluster.yml
 │       ├── delete-eks-cluster.yml
-│       ├── deploy-to-eks.yml
-│       ├── deploy-v1cs-to-eks.yml
+│       ├── deploy-v1cs-to-eks-split.yml
 │       ├── create-v1cs-policy.yml
 │       └── uninstall-v1cs-from-eks.yml
-├── k8s
-│   └── services.yaml
 ├── trendmicro
 │   ├── policy.json
 │   ├── runtimeruleset.json
@@ -110,7 +101,6 @@ Removes Vision One Container Security from an EKS cluster and deregisters it fro
 │       ├── create_policy.py
 │       ├── create_ruleset.py
 │       └── delete_ruleset.py
-├── Dockerfile
 └── README.md
 ```
 
@@ -143,7 +133,7 @@ Once the cluster is created, the workflow will automatically set the `EKS_CLUSTE
 
 2. Deploy Vision One Container Security to your EKS cluster:
    - Go to the "Actions" tab in your GitHub repository
-   - Select the "Deploy Vision One Container Security to EKS" workflow
+   - Select the "Deploy Vision One Container Security" workflow
    - Fill in the required parameters:
      - Vision One Container Security Policy ID (created in the previous step)
      - Vision One Container Security Group ID
@@ -177,14 +167,6 @@ The workflow will:
 - Remove the trendmicro-system namespace
 - Deregister the cluster from Vision One
 
-### Deploying to the Cluster
-
-1. Push to your main branch or manually trigger the "Build and Deploy to EKS" workflow
-2. The workflow will:
-   - Build your Docker image
-   - Push it to Amazon ECR
-   - Deploy it to your EKS cluster with appropriate configuration
-
 ### Deleting the Cluster
 
 1. Go to the "Actions" tab in your GitHub repository
@@ -216,7 +198,7 @@ The `scripts` subdirectory contains Python scripts used by the policy creation w
 The workflows are designed to work together:
 
 1. Create a Vision One Container Security policy with `create-v1cs-policy.yml`
-2. Deploy Vision One Container Security to your EKS cluster with `deploy-v1cs-to-eks.yml`
+2. Deploy Vision One Container Security to your EKS cluster with `deploy-v1cs-to-eks-split.yml`
 3. When needed, uninstall Vision One Container Security with `uninstall-v1cs-from-eks.yml`
 
 ## Cost Considerations

@@ -37,12 +37,13 @@ env:
   V1CS_API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
 
 jobs:
-  deploy-container-security:
+  check-prerequisites:
+    name: Check Prerequisites
     runs-on: ubuntu-latest
+    outputs:
+      cluster_exists: ${{ steps.check-cluster.outputs.exists }}
+      can_proceed: ${{ steps.check-trendmicro.outputs.can_proceed }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -62,36 +63,82 @@ jobs:
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
 
-      - name: Install required packages
+      - name: Check EKS Cluster
+        id: check-cluster
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq curl
+          echo "Checking if EKS cluster '$CLUSTER_NAME' exists in region $AWS_REGION..."
+          
+          if aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION &>/dev/null; then
+            echo "✅ EKS cluster '$CLUSTER_NAME' exists in region $AWS_REGION"
+            echo "exists=true" >> $GITHUB_OUTPUT
+            
+            # Update kubeconfig
+            aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+            echo "✅ Successfully connected to EKS cluster"
+          else
+            echo "::error::EKS cluster '$CLUSTER_NAME' does not exist in region $AWS_REGION"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-      - name: Connect to EKS Cluster
-        id: connect-eks
+      - name: Check for existing Trend Micro installation
+        id: check-trendmicro
         run: |
-          echo "Connecting to EKS cluster: $CLUSTER_NAME in region $AWS_REGION"
+          echo "Checking for existing Trend Micro Container Security installation..."
           
-          # Check if the cluster exists
-          if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION &>/dev/null; then
-            echo "::error::Cluster '$CLUSTER_NAME' does not exist in region $AWS_REGION"
-            exit 1
+          # List all Helm releases across all namespaces
+          echo "Existing Helm releases:"
+          helm list --all-namespaces
+          
+          # Check specifically for trendmicro release
+          if helm list --all-namespaces | grep -q "trendmicro"; then
+            echo "::warning::Trend Micro Vision One Container Security is already installed"
+            echo "can_proceed=false" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo "✅ No existing Trend Micro Container Security installation found"
+            echo "can_proceed=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Prerequisite Summary
+        run: |
+          echo "## Prerequisite Checks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "* **EKS Cluster**: $CLUSTER_NAME in $AWS_REGION - ✅ Available" >> $GITHUB_STEP_SUMMARY
           
-          # Update kubeconfig to connect to the cluster
+          if [[ "${{ steps.check-trendmicro.outputs.can_proceed }}" == "true" ]]; then
+            echo "* **Trend Micro Status**: ✅ Not installed, can proceed with deployment" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "* **Trend Micro Status**: ⚠️ Already installed, cannot proceed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  prepare-deployment:
+    name: Prepare Deployment
+    needs: check-prerequisites
+    if: needs.check-prerequisites.outputs.can_proceed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      values_file: ${{ steps.prepare-values.outputs.file_path }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+          
+          # Connect to cluster
           aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-          
-          # Verify connection
-          if ! kubectl get nodes &>/dev/null; then
-            echo "::error::Failed to connect to cluster '$CLUSTER_NAME'"
-            exit 1
-          fi
-          
-          echo "✅ Successfully connected to EKS cluster: $CLUSTER_NAME"
-          echo "Node count: $(kubectl get nodes --no-headers | wc -l)"
-          echo "Kubernetes version: $(kubectl version --short | grep 'Server Version' | cut -d' ' -f3)"
 
       - name: Create Vision One Container Security Registration Secret
+        id: create-secret
         run: |
           echo "Creating trendmicro-system namespace if it doesn't exist"
           kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
@@ -105,6 +152,7 @@ jobs:
           echo "✅ Secret created successfully"
 
       - name: Prepare Helm Values File
+        id: prepare-values
         run: |
           echo "Creating customized overrides.yaml file"
           
@@ -117,7 +165,10 @@ jobs:
           EXCLUSIONS_YAML="${EXCLUSIONS_YAML%,}]"
           
           # Create the overrides.yaml file
-          cat > overrides.yaml << EOF
+          mkdir -p /tmp/helm-values
+          VALUES_FILE="/tmp/helm-values/overrides.yaml"
+          
+          cat > "$VALUES_FILE" << EOF
           cloudOne:
             clusterRegistrationKey: true
             groupId: $V1CS_GROUP_ID
@@ -138,20 +189,93 @@ jobs:
           EOF
           
           echo "Generated overrides.yaml:"
-          cat overrides.yaml
+          cat "$VALUES_FILE"
+          
+          # Save path for next job
+          echo "file_path=$VALUES_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload Values File
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-values
+          path: /tmp/helm-values/overrides.yaml
+          retention-days: 7
+
+      - name: Preparation Summary
+        run: |
+          echo "## Deployment Preparation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "* **Secret Creation**: ✅ Registration key secret created" >> $GITHUB_STEP_SUMMARY
+          echo "* **Values File**: ✅ Generated with specified settings" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy ID**: $V1CS_POLICY_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Group ID**: $V1CS_GROUP_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Excluded Namespaces**: $NAMESPACE_EXCLUSIONS" >> $GITHUB_STEP_SUMMARY
+
+  deploy-helm:
+    name: Deploy Helm Chart
+    needs: [check-prerequisites, prepare-deployment]
+    if: needs.check-prerequisites.outputs.can_proceed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      deployment_status: ${{ steps.install-chart.outputs.status }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          
+          # Connect to cluster
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+
+      - name: Download Values File
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-values
+          path: /tmp/helm-values
 
       - name: Install Vision One Container Security with Helm
+        id: install-chart
         run: |
           echo "Installing Vision One Container Security Helm chart"
+          VALUES_FILE="/tmp/helm-values/overrides.yaml"
           
-          helm upgrade --install \
+          if [ ! -f "$VALUES_FILE" ]; then
+            echo "::error::Values file not found at $VALUES_FILE"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "Using values file:"
+          cat "$VALUES_FILE"
+          
+          # Install the Helm chart
+          if helm upgrade --install \
             trendmicro \
             --namespace trendmicro-system \
             --create-namespace \
-            --values overrides.yaml \
-            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
-          
-          echo "✅ Helm install/upgrade completed"
+            --values "$VALUES_FILE" \
+            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz; then
+            
+            echo "✅ Helm install/upgrade completed successfully"
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Failed to install Helm chart"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
       - name: Verify Deployment
         run: |
@@ -171,6 +295,34 @@ jobs:
           else
             echo "⚠️ Some pods may not be running yet. Please check the pod status manually."
           fi
+
+      - name: Deployment Summary
+        run: |
+          echo "## Helm Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "* **Helm Chart**: trendmicro-container-security" >> $GITHUB_STEP_SUMMARY
+          echo "* **Namespace**: trendmicro-system" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status**: ✅ Deployed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pod Status" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl -n trendmicro-system get pods >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  get-cluster-id:
+    name: Get Vision One Cluster ID
+    needs: [check-prerequisites, deploy-helm]
+    if: needs.check-prerequisites.outputs.can_proceed == 'true' && needs.deploy-helm.outputs.deployment_status == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_id: ${{ steps.find-cluster-id.outputs.cluster_id }}
+      cluster_name: ${{ steps.find-cluster-id.outputs.cluster_name }}
+      found: ${{ steps.find-cluster-id.outputs.found }}
+    steps:
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
 
       - name: Wait for Vision One registration
         run: |
@@ -295,55 +447,100 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload Deployment Info
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-info
-          path: overrides.yaml
-          retention-days: 30
-
-      - name: Job Summary
+      - name: Vision One Info Summary
         run: |
-          echo "## Vision One Container Security Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Target Environment" >> $GITHUB_STEP_SUMMARY
-          echo "* **EKS Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "* **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Vision One Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "* **Policy ID**: $V1CS_POLICY_ID" >> $GITHUB_STEP_SUMMARY
-          echo "* **Group ID**: $V1CS_GROUP_ID" >> $GITHUB_STEP_SUMMARY
-          echo "* **Excluded Namespaces**: $NAMESPACE_EXCLUSIONS" >> $GITHUB_STEP_SUMMARY
+          echo "## Vision One Integration" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [[ "${{ steps.find-cluster-id.outputs.found }}" == "true" ]]; then
-            echo "### Vision One Registration" >> $GITHUB_STEP_SUMMARY
             echo "* **Cluster Name in Vision One**: ${{ steps.find-cluster-id.outputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
             echo "* **Cluster ID**: \`${{ steps.find-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
-            echo "* **Status**: ✅ Successfully registered" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ✅ Successfully registered with Vision One" >> $GITHUB_STEP_SUMMARY
           else
-            echo "### Vision One Registration" >> $GITHUB_STEP_SUMMARY
             echo "* **Status**: ⚠️ Cluster registration pending or not found" >> $GITHUB_STEP_SUMMARY
             echo "* **Note**: Registration may take several minutes to complete" >> $GITHUB_STEP_SUMMARY
             echo "* **Recommendation**: Check Vision One Container Security console manually" >> $GITHUB_STEP_SUMMARY
           fi
+
+  deployment-summary:
+    name: Generate Deployment Summary
+    needs: [check-prerequisites, prepare-deployment, deploy-helm, get-cluster-id]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Final Summary
+        run: |
+          echo "# Vision One Container Security Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Target Environment" >> $GITHUB_STEP_SUMMARY
+          echo "* **EKS Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "* **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Deployment Status" >> $GITHUB_STEP_SUMMARY
+          
+          # Prerequisites check
+          if [[ "${{ needs.check-prerequisites.result }}" == "success" ]]; then
+            if [[ "${{ needs.check-prerequisites.outputs.can_proceed }}" == "true" ]]; then
+              echo "* **Prerequisites**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "* **Prerequisites**: ⚠️ Trend Micro already installed" >> $GITHUB_STEP_SUMMARY
+              echo "* **Action**: ⏭️ Deployment skipped" >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+          else
+            echo "* **Prerequisites**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          # Preparation status
+          if [[ "${{ needs.prepare-deployment.result }}" == "success" ]]; then
+            echo "* **Preparation**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "* **Preparation**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Helm deployment status
+          if [[ "${{ needs.deploy-helm.result }}" == "success" ]]; then
+            echo "* **Helm Deployment**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "* **Helm Deployment**: ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Vision One registration status
+          if [[ "${{ needs.get-cluster-id.result }}" == "success" ]]; then
+            if [[ "${{ needs.get-cluster-id.outputs.found }}" == "true" ]]; then
+              echo "* **Vision One Registration**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "* **Vision One Registration**: ⚠️ Pending" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "* **Vision One Registration**: ⚠️ Status check failed" >> $GITHUB_STEP_SUMMARY
+          fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
-          echo "* **Secret Created**: ✅" >> $GITHUB_STEP_SUMMARY
-          echo "* **Helm Chart Installed**: ✅" >> $GITHUB_STEP_SUMMARY
-          echo "* **Deployment Completed**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "## Vision One Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy ID**: $V1CS_POLICY_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Group ID**: $V1CS_GROUP_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Excluded Namespaces**: $NAMESPACE_EXCLUSIONS" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.get-cluster-id.outputs.found }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Vision One Registration Details" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster Name in Vision One**: ${{ needs.get-cluster-id.outputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster ID**: \`${{ needs.get-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## For Uninstallation" >> $GITHUB_STEP_SUMMARY
+            echo "To uninstall this deployment, use the \"Uninstall Vision One Container Security\" workflow with these parameters:" >> $GITHUB_STEP_SUMMARY
+            echo "- **EKS Cluster Name**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+            echo "- **Vision One Cluster ID**: \`${{ needs.get-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Verification" >> $GITHUB_STEP_SUMMARY
           echo "To verify the deployment status, connect to your cluster and run:" >> $GITHUB_STEP_SUMMARY
           echo "```bash" >> $GITHUB_STEP_SUMMARY
           echo "kubectl -n trendmicro-system get pods" >> $GITHUB_STEP_SUMMARY
           echo "```" >> $GITHUB_STEP_SUMMARY
-          
-          if [[ "${{ steps.find-cluster-id.outputs.found }}" == "true" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### For Uninstallation" >> $GITHUB_STEP_SUMMARY
-            echo "To uninstall this deployment, use the \"Uninstall Vision One Container Security\" workflow with these parameters:" >> $GITHUB_STEP_SUMMARY
-            echo "- **EKS Cluster Name**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
-            echo "- **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
-            echo "- **Vision One Cluster ID**: \`${{ steps.find-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
-          fi

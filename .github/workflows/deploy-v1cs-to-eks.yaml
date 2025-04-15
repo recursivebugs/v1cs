@@ -186,19 +186,48 @@ jobs:
               -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
               -H "Accept: application/json")
             
-            # Check if the request was successful
-            if [[ $(echo "$RESPONSE" | jq -r '.responseCode // empty') == "401" ]]; then
-              echo "Authentication failed. Please check your Vision One API key."
-              break
+            # Debug the response
+            echo "Checking API response format..."
+            # Print a truncated version of the response for debugging
+            echo "${RESPONSE:0:300}..."
+            
+            # Check if response is valid JSON
+            if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+              echo "⚠️ API response is not valid JSON. Retrying..."
+              continue
             fi
             
-            # Function to compare cluster names case-insensitively
-            CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
-            MATCHING_CLUSTERS=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[]? | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'")')
+            # Check for error response
+            ERROR_CODE=$(echo "$RESPONSE" | jq -r '.responseCode // empty')
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // empty')
             
-            if [[ -n "$MATCHING_CLUSTERS" ]]; then
-              echo "✅ Cluster registration detected in Vision One!"
+            if [[ -n "$ERROR_CODE" || -n "$ERROR_MSG" ]]; then
+              echo "⚠️ API returned error: Code=$ERROR_CODE, Message=$ERROR_MSG"
+              if [[ "$ERROR_CODE" == "401" ]]; then
+                echo "Authentication failed. Please check your Vision One API key."
+                break
+              fi
+              continue
+            fi
+            
+            # Check if response has items array
+            if ! echo "$RESPONSE" | jq -e '.items' >/dev/null 2>&1; then
+              echo "⚠️ API response doesn't contain an 'items' array. Retrying..."
+              continue
+            fi
+            
+            # Convert cluster name to lowercase for case-insensitive comparison
+            CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
+            
+            # Try to find the cluster by name
+            echo "Checking for cluster with name '$CLUSTER_NAME' or '$CLUSTER_NAME_LOWER'..."
+            FOUND_CLUSTERS=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[] | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'") | .name' 2>/dev/null || echo "")
+            
+            if [[ -n "$FOUND_CLUSTERS" ]]; then
+              echo "✅ Cluster registration detected in Vision One with name: $FOUND_CLUSTERS"
               break
+            else
+              echo "Cluster not found in current list. Waiting for registration to complete..."
             fi
             
             if [ $i -eq $MAX_ATTEMPTS ]; then
@@ -211,26 +240,48 @@ jobs:
         run: |
           echo "Looking up cluster ID in Vision One..."
           
-          # Function to compare cluster names case-insensitively
-          CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
-          
           # Get list of clusters from Vision One
           RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters" \
             -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
             -H "Accept: application/json")
           
-          # Check for errors
-          if [[ $(echo "$RESPONSE" | jq -r '.responseCode // empty') == "401" ]]; then
-            echo "::warning::Authentication failed. Unable to retrieve cluster ID."
+          # Check if response is valid JSON
+          if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+            echo "::warning::API response is not valid JSON"
+            echo "found=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # Look for matching cluster
-          MATCHING_CLUSTERS=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[]? | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'")')
+          # Check for error response
+          ERROR_CODE=$(echo "$RESPONSE" | jq -r '.responseCode // empty')
+          ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // empty')
           
-          if [[ -n "$MATCHING_CLUSTERS" ]]; then
-            CLUSTER_ID=$(echo "$MATCHING_CLUSTERS" | jq -r '.id')
-            CLUSTER_DISPLAY_NAME=$(echo "$MATCHING_CLUSTERS" | jq -r '.name')
+          if [[ -n "$ERROR_CODE" || -n "$ERROR_MSG" ]]; then
+            echo "::warning::API returned error: Code=$ERROR_CODE, Message=$ERROR_MSG"
+            echo "found=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if response has items array
+          if ! echo "$RESPONSE" | jq -e '.items' >/dev/null 2>&1; then
+            echo "::warning::API response doesn't contain an 'items' array"
+            echo "found=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Convert cluster name to lowercase for case-insensitive comparison
+          CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          # Show all available clusters for troubleshooting
+          echo "Available clusters in Vision One:"
+          echo "$RESPONSE" | jq -r '.items[] | "- " + .name + " (ID: " + .id + ")"' || echo "None or unable to parse response"
+          
+          # Find the cluster with matching name
+          CLUSTER_DATA=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[] | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'")' 2>/dev/null || echo "")
+          
+          if [[ -n "$CLUSTER_DATA" ]]; then
+            CLUSTER_ID=$(echo "$CLUSTER_DATA" | jq -r '.id')
+            CLUSTER_DISPLAY_NAME=$(echo "$CLUSTER_DATA" | jq -r '.name')
             
             echo "Found cluster in Vision One: $CLUSTER_DISPLAY_NAME"
             echo "Cluster ID: $CLUSTER_ID"
@@ -243,10 +294,6 @@ jobs:
             echo "::warning::Cluster not found in Vision One. It may still be registering."
             echo "found=false" >> $GITHUB_OUTPUT
           fi
-          
-          # Show all available clusters for troubleshooting
-          echo "Available clusters in Vision One:"
-          echo "$RESPONSE" | jq -r '.items[]? | "- " + .name + " (ID: " + .id + ")"' || echo "None or unable to parse response"
 
       - name: Upload Deployment Info
         uses: actions/upload-artifact@v4
@@ -278,6 +325,7 @@ jobs:
             echo "### Vision One Registration" >> $GITHUB_STEP_SUMMARY
             echo "* **Status**: ⚠️ Cluster registration pending or not found" >> $GITHUB_STEP_SUMMARY
             echo "* **Note**: Registration may take several minutes to complete" >> $GITHUB_STEP_SUMMARY
+            echo "* **Recommendation**: Check Vision One Container Security console manually" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY

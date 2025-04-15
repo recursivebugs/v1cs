@@ -1,4 +1,4 @@
-name: Create Vision One Container Security Policy
+name: Create V1 Container Security Policy
 on:
   workflow_dispatch:
     inputs:

@@ -12,6 +12,10 @@ on:
         required: true
         default: 'us-west-2'
         type: string
+      v1cs_cluster_id:
+        description: 'Vision One Container Security Cluster ID'
+        required: true
+        type: string
       skip_v1_deregistration:
         description: 'Skip Vision One Cluster Deregistration'
         required: false
@@ -21,6 +25,7 @@ on:
 env:
   AWS_REGION: ${{ github.event.inputs.region }}
   CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  V1CS_CLUSTER_ID: ${{ github.event.inputs.v1cs_cluster_id }}
   V1CS_API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
 
 jobs:
@@ -80,22 +85,14 @@ jobs:
           echo "✅ Successfully connected to EKS cluster: $CLUSTER_NAME"
           echo "cluster_exists=true" >> $GITHUB_OUTPUT
 
-      - name: Find Vision One Container Security Cluster ID
-        id: find-cluster
+      - name: Validate Vision One Container Security Cluster ID
+        id: validate-cluster
         if: ${{ !inputs.skip_v1_deregistration }}
         run: |
-          echo "Searching for cluster '$CLUSTER_NAME' in Vision One Container Security..."
+          echo "Using provided Vision One cluster ID: $V1CS_CLUSTER_ID"
           
-          # Function to convert cluster name to lowercase (Vision One sometimes uses lowercase)
-          function to_lowercase() {
-            echo "$1" | tr '[:upper:]' '[:lower:]'
-          }
-          
-          # Get the lowercase version of our cluster name
-          CLUSTER_NAME_LOWER=$(to_lowercase "$CLUSTER_NAME")
-          
-          # List all clusters in Vision One
-          RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters" \
+          # Verify the cluster ID exists in Vision One
+          RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters/$V1CS_CLUSTER_ID" \
             -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
             -H "Accept: application/json")
           
@@ -105,22 +102,13 @@ jobs:
             exit 1
           fi
           
-          echo "Response: $RESPONSE"
-          
-          # Parse the response to find our cluster
-          CLUSTERS=$(echo $RESPONSE | jq -r '.items[]? | select(.name | ascii_downcase == "'$CLUSTER_NAME_LOWER'" or .name == "'$CLUSTER_NAME'") | {id, name}')
-          
-          if [ -z "$CLUSTERS" ]; then
-            echo "::warning::No matching cluster found in Vision One Container Security"
-            echo "cluster_id=" >> $GITHUB_OUTPUT
+          # Check if the cluster exists
+          if [ "$(echo $RESPONSE | jq -r '.responseCode // ""')" == "404" ] || [ "$(echo $RESPONSE | jq -r '.message // ""')" == "Not Found" ]; then
+            echo "::warning::Cluster ID '$V1CS_CLUSTER_ID' not found in Vision One Container Security"
             echo "v1cs_cluster_found=false" >> $GITHUB_OUTPUT
           else
-            # Get the cluster ID
-            CLUSTER_ID=$(echo "$CLUSTERS" | jq -r '.id')
-            CLUSTER_DISPLAY_NAME=$(echo "$CLUSTERS" | jq -r '.name')
-            
-            echo "Found cluster in Vision One: $CLUSTER_DISPLAY_NAME (ID: $CLUSTER_ID)"
-            echo "cluster_id=$CLUSTER_ID" >> $GITHUB_OUTPUT
+            CLUSTER_DISPLAY_NAME=$(echo "$RESPONSE" | jq -r '.name // "Unknown"')
+            echo "Found cluster in Vision One: $CLUSTER_DISPLAY_NAME (ID: $V1CS_CLUSTER_ID)"
             echo "v1cs_cluster_found=true" >> $GITHUB_OUTPUT
           fi
 
@@ -149,18 +137,17 @@ jobs:
           fi
 
       - name: Delete Cluster from Vision One Container Security
-        if: steps.find-cluster.outputs.v1cs_cluster_found == 'true' && steps.find-cluster.outputs.cluster_id != ''
+        if: steps.validate-cluster.outputs.v1cs_cluster_found == 'true'
         run: |
           echo "Deleting cluster from Vision One Container Security..."
-          CLUSTER_ID="${{ steps.find-cluster.outputs.cluster_id }}"
           
           # Send delete request to Vision One API
-          RESPONSE=$(curl -s -X DELETE "${V1CS_API_URL}/kubernetesClusters/$CLUSTER_ID" \
+          RESPONSE=$(curl -s -X DELETE "${V1CS_API_URL}/kubernetesClusters/$V1CS_CLUSTER_ID" \
             -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
             -H "Accept: application/json")
           
           # Check if the request was successful (a 204 response typically returns empty content)
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${V1CS_API_URL}/kubernetesClusters/$CLUSTER_ID" \
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${V1CS_API_URL}/kubernetesClusters/$V1CS_CLUSTER_ID" \
             -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
             -H "Accept: application/json")
           
@@ -194,9 +181,9 @@ jobs:
           if [[ "${{ inputs.skip_v1_deregistration }}" == "true" ]]; then
             echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY
             echo "* **Status**: ⏭️ Skipped as requested" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ steps.find-cluster.outputs.v1cs_cluster_found }}" == "true" ]]; then
+          elif [[ "${{ steps.validate-cluster.outputs.v1cs_cluster_found }}" == "true" ]]; then
             echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY
-            echo "* **Cluster ID**: ${{ steps.find-cluster.outputs.cluster_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster ID**: ${{ env.V1CS_CLUSTER_ID }}" >> $GITHUB_STEP_SUMMARY
             echo "* **Status**: ✅ Cluster deleted from Vision One" >> $GITHUB_STEP_SUMMARY
           else
             echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY

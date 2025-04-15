@@ -1,4 +1,4 @@
-name: Uninstall V1 Container Security on the EKS Cluster
+name: 4) Uninstall V1 Container Security on the EKS Cluster
 
 on:
   workflow_dispatch:

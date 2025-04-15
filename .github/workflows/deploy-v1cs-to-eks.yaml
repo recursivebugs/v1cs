@@ -1,0 +1,196 @@
+name: Deploy Vision One Container Security to EKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      policy_id:
+        description: 'Vision One Container Security Policy ID'
+        required: true
+        type: string
+      group_id:
+        description: 'Vision One Container Security Group ID'
+        required: true
+        default: '00000000-0000-0000-0000-000000000001'
+        type: string
+      cluster_name:
+        description: 'EKS Cluster Name (must exist)'
+        required: true
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-west-2'
+        type: string
+      namespace_exclusions:
+        description: 'Namespaces to exclude (comma-separated)'
+        required: false
+        default: 'kube-system'
+        type: string
+
+env:
+  AWS_REGION: ${{ github.event.inputs.region }}
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  V1CS_POLICY_ID: ${{ github.event.inputs.policy_id }}
+  V1CS_GROUP_ID: ${{ github.event.inputs.group_id }}
+  NAMESPACE_EXCLUSIONS: ${{ github.event.inputs.namespace_exclusions }}
+
+jobs:
+  deploy-container-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Setup Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Connect to EKS Cluster
+        id: connect-eks
+        run: |
+          echo "Connecting to EKS cluster: $CLUSTER_NAME in region $AWS_REGION"
+          
+          # Check if the cluster exists
+          if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION &>/dev/null; then
+            echo "::error::Cluster '$CLUSTER_NAME' does not exist in region $AWS_REGION"
+            exit 1
+          fi
+          
+          # Update kubeconfig to connect to the cluster
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+          
+          # Verify connection
+          if ! kubectl get nodes &>/dev/null; then
+            echo "::error::Failed to connect to cluster '$CLUSTER_NAME'"
+            exit 1
+          fi
+          
+          echo "✅ Successfully connected to EKS cluster: $CLUSTER_NAME"
+          echo "Node count: $(kubectl get nodes --no-headers | wc -l)"
+          echo "Kubernetes version: $(kubectl version --short | grep 'Server Version' | cut -d' ' -f3)"
+
+      - name: Create Vision One Container Security Registration Secret
+        run: |
+          echo "Creating trendmicro-system namespace if it doesn't exist"
+          kubectl create namespace trendmicro-system --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Creating Vision One Container Security registration key secret"
+          kubectl create secret generic trendmicro-container-security-registration-key \
+            -n trendmicro-system \
+            --from-literal=registration.key=${{ secrets.CONTAINER_SECURITY_API_KEY }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "✅ Secret created successfully"
+
+      - name: Prepare Helm Values File
+        run: |
+          echo "Creating customized overrides.yaml file"
+          
+          # Format exclusion namespaces as a YAML array
+          IFS=',' read -ra EXCLUSIONS <<< "$NAMESPACE_EXCLUSIONS"
+          EXCLUSIONS_YAML="["
+          for ns in "${EXCLUSIONS[@]}"; do
+            EXCLUSIONS_YAML+="$(echo $ns | xargs),"
+          done
+          EXCLUSIONS_YAML="${EXCLUSIONS_YAML%,}]"
+          
+          # Create the overrides.yaml file
+          cat > overrides.yaml << EOF
+          cloudOne:
+            clusterRegistrationKey: true
+            groupId: $V1CS_GROUP_ID
+            clusterName: $CLUSTER_NAME
+            clusterNamePrefix: $CLUSTER_NAME
+            policyId: $V1CS_POLICY_ID
+            endpoint: https://container.us-1.cloudone.trendmicro.com
+            exclusion:
+              namespaces: $EXCLUSIONS_YAML
+            runtimeSecurity:
+              enabled: true
+            vulnerabilityScanning:
+              enabled: true
+            malwareScanning:
+              enabled: true
+            inventoryCollection:
+              enabled: true
+          EOF
+          
+          echo "Generated overrides.yaml:"
+          cat overrides.yaml
+
+      - name: Install Vision One Container Security with Helm
+        run: |
+          echo "Installing Vision One Container Security Helm chart"
+          
+          helm upgrade --install \
+            trendmicro \
+            --namespace trendmicro-system \
+            --create-namespace \
+            --values overrides.yaml \
+            https://github.com/trendmicro/cloudone-container-security-helm/archive/master.tar.gz
+          
+          echo "✅ Helm install/upgrade completed"
+
+      - name: Verify Deployment
+        run: |
+          echo "Verifying Vision One Container Security deployment"
+          
+          echo "Waiting for pods to be ready..."
+          kubectl -n trendmicro-system wait --for=condition=Ready pods --all --timeout=300s || true
+          
+          echo "Current pods status:"
+          kubectl -n trendmicro-system get pods
+          
+          # Check if essential pods are running
+          RUNNING_PODS=$(kubectl -n trendmicro-system get pods -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | wc -w)
+          
+          if [ "$RUNNING_PODS" -gt 0 ]; then
+            echo "✅ Vision One Container Security deployed successfully with $RUNNING_PODS running pods"
+          else
+            echo "⚠️ Some pods may not be running yet. Please check the pod status manually."
+          fi
+
+      - name: Upload Deployment Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info
+          path: overrides.yaml
+          retention-days: 30
+
+      - name: Job Summary
+        run: |
+          echo "## Vision One Container Security Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Target Environment" >> $GITHUB_STEP_SUMMARY
+          echo "* **EKS Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "* **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Vision One Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "* **Policy ID**: $V1CS_POLICY_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Group ID**: $V1CS_GROUP_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **Excluded Namespaces**: $NAMESPACE_EXCLUSIONS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "* **Secret Created**: ✅" >> $GITHUB_STEP_SUMMARY
+          echo "* **Helm Chart Installed**: ✅" >> $GITHUB_STEP_SUMMARY
+          echo "* **Deployment Completed**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To verify the deployment status, connect to your cluster and run:" >> $GITHUB_STEP_SUMMARY
+          echo "```bash" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl -n trendmicro-system get pods" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY

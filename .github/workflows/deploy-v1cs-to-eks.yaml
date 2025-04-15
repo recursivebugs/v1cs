@@ -34,6 +34,7 @@ env:
   V1CS_POLICY_ID: ${{ github.event.inputs.policy_id }}
   V1CS_GROUP_ID: ${{ github.event.inputs.group_id }}
   NAMESPACE_EXCLUSIONS: ${{ github.event.inputs.namespace_exclusions }}
+  V1CS_API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
 
 jobs:
   deploy-container-security:
@@ -60,6 +61,11 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
+
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
 
       - name: Connect to EKS Cluster
         id: connect-eks
@@ -166,6 +172,82 @@ jobs:
             echo "⚠️ Some pods may not be running yet. Please check the pod status manually."
           fi
 
+      - name: Wait for Vision One registration
+        run: |
+          echo "Waiting for cluster to be registered with Vision One (up to 5 minutes)..."
+          MAX_ATTEMPTS=30  # 30 attempts * 10 seconds = 5 minutes
+          
+          for ((i=1; i<=$MAX_ATTEMPTS; i++)); do
+            echo "Attempt $i of $MAX_ATTEMPTS..."
+            sleep 10
+            
+            # Check if the cluster is registered in Vision One
+            RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters" \
+              -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
+              -H "Accept: application/json")
+            
+            # Check if the request was successful
+            if [[ $(echo "$RESPONSE" | jq -r '.responseCode // empty') == "401" ]]; then
+              echo "Authentication failed. Please check your Vision One API key."
+              break
+            fi
+            
+            # Function to compare cluster names case-insensitively
+            CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
+            MATCHING_CLUSTERS=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[]? | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'")')
+            
+            if [[ -n "$MATCHING_CLUSTERS" ]]; then
+              echo "✅ Cluster registration detected in Vision One!"
+              break
+            fi
+            
+            if [ $i -eq $MAX_ATTEMPTS ]; then
+              echo "⚠️ Timeout waiting for cluster registration. It might still be in progress."
+            fi
+          done
+
+      - name: Find Vision One Cluster ID
+        id: find-cluster-id
+        run: |
+          echo "Looking up cluster ID in Vision One..."
+          
+          # Function to compare cluster names case-insensitively
+          CLUSTER_NAME_LOWER=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
+          
+          # Get list of clusters from Vision One
+          RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters" \
+            -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
+            -H "Accept: application/json")
+          
+          # Check for errors
+          if [[ $(echo "$RESPONSE" | jq -r '.responseCode // empty') == "401" ]]; then
+            echo "::warning::Authentication failed. Unable to retrieve cluster ID."
+            exit 0
+          fi
+          
+          # Look for matching cluster
+          MATCHING_CLUSTERS=$(echo "$RESPONSE" | jq -r --arg name "$CLUSTER_NAME_LOWER" '.items[]? | select(.name | ascii_downcase == $name or .name == "'$CLUSTER_NAME'")')
+          
+          if [[ -n "$MATCHING_CLUSTERS" ]]; then
+            CLUSTER_ID=$(echo "$MATCHING_CLUSTERS" | jq -r '.id')
+            CLUSTER_DISPLAY_NAME=$(echo "$MATCHING_CLUSTERS" | jq -r '.name')
+            
+            echo "Found cluster in Vision One: $CLUSTER_DISPLAY_NAME"
+            echo "Cluster ID: $CLUSTER_ID"
+            
+            # Save to output
+            echo "cluster_id=$CLUSTER_ID" >> $GITHUB_OUTPUT
+            echo "cluster_name=$CLUSTER_DISPLAY_NAME" >> $GITHUB_OUTPUT
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Cluster not found in Vision One. It may still be registering."
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Show all available clusters for troubleshooting
+          echo "Available clusters in Vision One:"
+          echo "$RESPONSE" | jq -r '.items[]? | "- " + .name + " (ID: " + .id + ")"' || echo "None or unable to parse response"
+
       - name: Upload Deployment Info
         uses: actions/upload-artifact@v4
         with:
@@ -186,6 +268,19 @@ jobs:
           echo "* **Group ID**: $V1CS_GROUP_ID" >> $GITHUB_STEP_SUMMARY
           echo "* **Excluded Namespaces**: $NAMESPACE_EXCLUSIONS" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.find-cluster-id.outputs.found }}" == "true" ]]; then
+            echo "### Vision One Registration" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster Name in Vision One**: ${{ steps.find-cluster-id.outputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster ID**: \`${{ steps.find-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ✅ Successfully registered" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Vision One Registration" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ⚠️ Cluster registration pending or not found" >> $GITHUB_STEP_SUMMARY
+            echo "* **Note**: Registration may take several minutes to complete" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
           echo "* **Secret Created**: ✅" >> $GITHUB_STEP_SUMMARY
           echo "* **Helm Chart Installed**: ✅" >> $GITHUB_STEP_SUMMARY
@@ -195,3 +290,12 @@ jobs:
           echo "```bash" >> $GITHUB_STEP_SUMMARY
           echo "kubectl -n trendmicro-system get pods" >> $GITHUB_STEP_SUMMARY
           echo "```" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.find-cluster-id.outputs.found }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### For Uninstallation" >> $GITHUB_STEP_SUMMARY
+            echo "To uninstall this deployment, use the \"Uninstall Vision One Container Security\" workflow with these parameters:" >> $GITHUB_STEP_SUMMARY
+            echo "- **EKS Cluster Name**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+            echo "- **Vision One Cluster ID**: \`${{ steps.find-cluster-id.outputs.cluster_id }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

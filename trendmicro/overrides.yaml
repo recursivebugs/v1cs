@@ -1,0 +1,16 @@
+cloudOne:
+    clusterRegistrationKey: true
+    groupId: 00000000-0000-0000-0000-000000000001
+    #clusterName: firefly # optional
+    clusterNamePrefix: firefly # optional
+    policyId: STGFireflyProject-2ZZpmI4m4kgGvPDB2lDtPZvk25e # optional
+    endpoint: https://container.us-1.cloudone.trendmicro.com
+    exclusion:
+        namespaces: [kube-system]
+    runtimeSecurity:
+        enabled: true
+    vulnerabilityScanning:
+        enabled: true
+    malwareScanning:
+        enabled: true
+    inventoryCollection:

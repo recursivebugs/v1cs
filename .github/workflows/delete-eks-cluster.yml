@@ -1,4 +1,4 @@
-name: Delete EKS Cluster
+name: 5) Delete EKS Cluster
 
 on:
   workflow_dispatch:

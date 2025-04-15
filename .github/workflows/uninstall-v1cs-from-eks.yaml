@@ -1,0 +1,208 @@
+name: Uninstall Vision One Container Security
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'EKS Cluster Name'
+        required: true
+        type: string
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-west-2'
+        type: string
+      skip_v1_deregistration:
+        description: 'Skip Vision One Cluster Deregistration'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: ${{ github.event.inputs.region }}
+  CLUSTER_NAME: ${{ github.event.inputs.cluster_name }}
+  V1CS_API_URL: https://api.xdr.trendmicro.com/v3.0/containerSecurity
+
+jobs:
+  uninstall-container-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          kubectl version --client
+
+      - name: Setup Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+          pip install requests
+
+      - name: Connect to EKS Cluster
+        id: connect-eks
+        run: |
+          echo "Attempting to connect to EKS cluster: $CLUSTER_NAME in region $AWS_REGION"
+          
+          # Check if the cluster exists
+          if ! aws eks describe-cluster --name $CLUSTER_NAME --region $AWS_REGION &>/dev/null; then
+            echo "::warning::Cluster '$CLUSTER_NAME' does not exist in region $AWS_REGION"
+            echo "cluster_exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Update kubeconfig to connect to the cluster
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+          
+          # Verify connection
+          if ! kubectl get nodes &>/dev/null; then
+            echo "::warning::Failed to connect to cluster '$CLUSTER_NAME'"
+            echo "cluster_exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "✅ Successfully connected to EKS cluster: $CLUSTER_NAME"
+          echo "cluster_exists=true" >> $GITHUB_OUTPUT
+
+      - name: Find Vision One Container Security Cluster ID
+        id: find-cluster
+        if: ${{ !inputs.skip_v1_deregistration }}
+        run: |
+          echo "Searching for cluster '$CLUSTER_NAME' in Vision One Container Security..."
+          
+          # Function to convert cluster name to lowercase (Vision One sometimes uses lowercase)
+          function to_lowercase() {
+            echo "$1" | tr '[:upper:]' '[:lower:]'
+          }
+          
+          # Get the lowercase version of our cluster name
+          CLUSTER_NAME_LOWER=$(to_lowercase "$CLUSTER_NAME")
+          
+          # List all clusters in Vision One
+          RESPONSE=$(curl -s -X GET "${V1CS_API_URL}/kubernetesClusters" \
+            -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
+            -H "Accept: application/json")
+          
+          # Check if the request was successful
+          if [ "$(echo $RESPONSE | jq -r '.responseCode // ""')" == "401" ] || [ "$(echo $RESPONSE | jq -r '.message // ""')" == "Unauthorized" ]; then
+            echo "::error::Authentication failed. Please check your Vision One API key."
+            exit 1
+          fi
+          
+          echo "Response: $RESPONSE"
+          
+          # Parse the response to find our cluster
+          CLUSTERS=$(echo $RESPONSE | jq -r '.items[]? | select(.name | ascii_downcase == "'$CLUSTER_NAME_LOWER'" or .name == "'$CLUSTER_NAME'") | {id, name}')
+          
+          if [ -z "$CLUSTERS" ]; then
+            echo "::warning::No matching cluster found in Vision One Container Security"
+            echo "cluster_id=" >> $GITHUB_OUTPUT
+            echo "v1cs_cluster_found=false" >> $GITHUB_OUTPUT
+          else
+            # Get the cluster ID
+            CLUSTER_ID=$(echo "$CLUSTERS" | jq -r '.id')
+            CLUSTER_DISPLAY_NAME=$(echo "$CLUSTERS" | jq -r '.name')
+            
+            echo "Found cluster in Vision One: $CLUSTER_DISPLAY_NAME (ID: $CLUSTER_ID)"
+            echo "cluster_id=$CLUSTER_ID" >> $GITHUB_OUTPUT
+            echo "v1cs_cluster_found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Uninstall Vision One Container Security Helm Chart
+        if: steps.connect-eks.outputs.cluster_exists == 'true'
+        run: |
+          echo "Checking if trendmicro-system namespace exists..."
+          if kubectl get namespace trendmicro-system &>/dev/null; then
+            echo "Checking if Helm release exists..."
+            if helm list -n trendmicro-system | grep -q "trendmicro"; then
+              echo "Uninstalling Vision One Container Security Helm chart..."
+              helm uninstall trendmicro --namespace trendmicro-system
+              echo "✅ Helm chart uninstalled successfully"
+            else
+              echo "::warning::No trendmicro Helm release found in trendmicro-system namespace"
+            fi
+            
+            echo "Waiting 30 seconds for resources to be cleaned up..."
+            sleep 30
+            
+            echo "Removing trendmicro-system namespace..."
+            kubectl delete namespace trendmicro-system --timeout=60s
+            echo "✅ Namespace removed successfully"
+          else
+            echo "::warning::trendmicro-system namespace not found in the cluster"
+          fi
+
+      - name: Delete Cluster from Vision One Container Security
+        if: steps.find-cluster.outputs.v1cs_cluster_found == 'true' && steps.find-cluster.outputs.cluster_id != ''
+        run: |
+          echo "Deleting cluster from Vision One Container Security..."
+          CLUSTER_ID="${{ steps.find-cluster.outputs.cluster_id }}"
+          
+          # Send delete request to Vision One API
+          RESPONSE=$(curl -s -X DELETE "${V1CS_API_URL}/kubernetesClusters/$CLUSTER_ID" \
+            -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
+            -H "Accept: application/json")
+          
+          # Check if the request was successful (a 204 response typically returns empty content)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${V1CS_API_URL}/kubernetesClusters/$CLUSTER_ID" \
+            -H "Authorization: Bearer ${{ secrets.CONTAINER_SECURITY_API_KEY }}" \
+            -H "Accept: application/json")
+          
+          if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            echo "✅ Cluster successfully deleted from Vision One Container Security"
+          else
+            echo "::warning::Failed to delete cluster from Vision One Container Security. HTTP Code: $HTTP_CODE"
+            echo "Response: $RESPONSE"
+          fi
+
+      - name: Job Summary
+        run: |
+          echo "## Vision One Container Security Uninstallation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Target Environment" >> $GITHUB_STEP_SUMMARY
+          echo "* **EKS Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "* **AWS Region**: $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.connect-eks.outputs.cluster_exists }}" == "true" ]]; then
+            echo "### Kubernetes Uninstallation" >> $GITHUB_STEP_SUMMARY
+            echo "* **Helm Chart Uninstalled**: ✅" >> $GITHUB_STEP_SUMMARY
+            echo "* **Namespace Removed**: ✅" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Kubernetes Uninstallation" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ⚠️ Cluster not found or not accessible" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ inputs.skip_v1_deregistration }}" == "true" ]]; then
+            echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ⏭️ Skipped as requested" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ steps.find-cluster.outputs.v1cs_cluster_found }}" == "true" ]]; then
+            echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY
+            echo "* **Cluster ID**: ${{ steps.find-cluster.outputs.cluster_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ✅ Cluster deleted from Vision One" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Vision One Deregistration" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ⚠️ Cluster not found in Vision One" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Uninstallation Completed" >> $GITHUB_STEP_SUMMARY
+          echo "* **Time**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY

@@ -1,4 +1,4 @@
-name: Deploy Vision One Container Security to EKS
+name: Deploy V1 Container Security to EKS Cluster
 
 on:
   workflow_dispatch:

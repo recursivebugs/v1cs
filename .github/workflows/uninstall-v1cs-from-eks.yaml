@@ -1,4 +1,4 @@
-name: Uninstall Vision One Container Security
+name: Uninstall V1 Container Security on the EKS Cluster
 
 on:
   workflow_dispatch:
